@@ -93,7 +93,8 @@
   #scanner video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   #scanner .frame { position: relative; width: 70vmin; height: 70vmin; border: 3px solid rgba(255,255,255,.85); border-radius: 20px; box-shadow: 0 0 0 9999px rgba(0,0,0,.45); }
   #scanner .bar { position: absolute; bottom: max(28px, env(safe-area-inset-bottom)); left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 12px; }
-  #scanner .bar p { margin: 0; color: #fff; text-shadow: 0 1px 3px #000; }
+  #scanner .bar p { margin: 0; color: #fff; text-shadow: 0 1px 3px #000; padding: 0 20px; text-align: center; font-size: 14px; }
+  #scanner input[type=range] { width: min(80vw, 320px); accent-color: #fff; }
 
   #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(140px); background: #3a2b21; color: var(--text); padding: 12px 16px; border-radius: 12px; max-width: calc(100% - 32px); box-shadow: 0 6px 24px rgba(0,0,0,.4); transition: transform .25s; z-index: 20; font-size: 14px; text-align: center; }
   #toast.show { transform: translateX(-50%) translateY(0); }
@@ -213,7 +214,11 @@
 <div id="scanner" hidden>
   <video id="scan-video" playsinline muted></video>
   <div class="frame"></div>
-  <div class="bar"><p>Point at the QR code</p><button class="secondary" data-action="scan-cancel">Cancel</button></div>
+  <div class="bar">
+    <p>Point at the QR code. Blurry? Move back a little and zoom in.</p>
+    <input type="range" id="scan-zoom" aria-label="Zoom" hidden>
+    <div class="row"><button class="secondary" data-action="scan-switch">Switch camera</button><button class="secondary" data-action="scan-cancel">Cancel</button></div>
+  </div>
 </div>
 <div id="toast"></div>
 
@@ -452,6 +457,45 @@ const CAMERA_ERRORS = {
   NotReadableError: 'The camera is busy. Close other apps using it, then try again.',
   OverconstrainedError: 'The camera could not be started with the requested settings.',
 };
+/* Ask for an HD feed (browsers often default to 640x480, which looks blurry when
+   stretched full screen), turn on continuous autofocus, and offer zoom so the
+   phone can be held a bit further away, where cameras focus more easily. */
+let camIndex = -1;   // -1 = browser's default back camera
+async function listCameras() {
+  return (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+}
+async function openCamera() {
+  const video = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+  const cams = camIndex >= 0 ? await listCameras() : [];
+  if (cams[camIndex]) video.deviceId = { exact: cams[camIndex].deviceId };
+  else video.facingMode = 'environment';
+  return navigator.mediaDevices.getUserMedia({ video, audio: false });
+}
+async function tuneCamera() {
+  const track = scanStream && scanStream.getVideoTracks()[0];
+  if (!track) return;
+  const caps = track.getCapabilities ? track.getCapabilities() : {};
+  if (caps.focusMode && caps.focusMode.includes('continuous'))
+    await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+  const z = $('#scan-zoom');
+  if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+    z.min = caps.zoom.min; z.max = Math.min(caps.zoom.max, 5); z.step = caps.zoom.step || 0.1;
+    z.value = (track.getSettings().zoom) || caps.zoom.min; z.hidden = false;
+    z.oninput = () => track.applyConstraints({ advanced: [{ zoom: +z.value }] }).catch(() => {});
+  } else z.hidden = true;
+}
+async function switchCamera() {
+  if (!scanStream) return;
+  const cams = await listCameras();
+  if (cams.length < 2) return toast('This device only has one camera available to the browser.');
+  camIndex = (camIndex + 1) % cams.length;
+  scanStream.getTracks().forEach(t => t.stop());
+  try { scanStream = await openCamera(); }
+  catch { camIndex = -1; scanStream = await openCamera().catch(() => null); if (!scanStream) return stopScan(); }
+  const v = $('#scan-video'); v.srcObject = scanStream; await v.play().catch(() => {});
+  await tuneCamera();
+  toast(cams[camIndex].label || `Camera ${camIndex + 1} of ${cams.length}`, 1800);
+}
 async function scan(callback) {
   if (!window.isSecureContext)
     return toast('The camera only works when the page is opened over https:// (not http:// or a local file). Use paste instead.', 7000);
@@ -461,7 +505,7 @@ async function scan(callback) {
   $('#scanner').hidden = false;
   let detect;
   try {
-    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    scanStream = await openCamera();
   } catch (e) {
     stopScan();
     return toast(CAMERA_ERRORS[e.name] || `Could not start the camera (${e.name}: ${e.message}).`, 8000);
@@ -472,6 +516,7 @@ async function scan(callback) {
     return toast('The QR scanner could not load (it comes from cdn.jsdelivr.net, which may be blocked by an ad blocker or Brave Shields). Use paste instead.', 8000);
   }
   const v = $('#scan-video'); v.srcObject = scanStream; await v.play().catch(() => {});
+  await tuneCamera();
   let last = 0, busy = false;
   const tick = async t => {
     if (!scanStream) return;
@@ -813,6 +858,7 @@ const actions = {
   'scan-offer': () => scan(startGuest),
   'paste-offer': () => startGuest($('#j-paste').value),
   'scan-cancel': stopScan,
+  'scan-switch': switchCamera,
   ready: pressReady,
 };
 document.addEventListener('click', e => {
