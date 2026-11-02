@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#1a1310">
+<title>Quick-Draw Duel · phone to phone</title>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+<style>
+  :root {
+    --bg: #1a1310; --panel: #2a1f19; --line: #4a372b; --text: #f6ead8; --muted: #c2a888;
+    --accent: #e9a23b; --win: #8fd16a; --lose: #ff6b5b; --radius: 16px;
+    --slab: "Rockwell", "Roboto Slab", "Courier New", Georgia, serif;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { background: radial-gradient(ellipse at 50% -10%, #3b2516 0%, var(--bg) 60%) fixed; -webkit-user-select: none; user-select: none; }
+  main { max-width: 440px; margin: 0 auto; padding: max(20px, env(safe-area-inset-top)) 20px 32px; min-height: 100%; display: flex; flex-direction: column; }
+  header { text-align: center; margin-bottom: 22px; }
+  h1 { margin: 0; font: 900 32px/1.1 var(--slab); letter-spacing: 2px; text-transform: uppercase; color: var(--accent); text-shadow: 0 2px 0 #000; }
+  .sub { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+  .view { display: flex; flex-direction: column; gap: 14px; }
+  .view[hidden] { display: none; }
+  button { font: inherit; border: 0; cursor: pointer; border-radius: 12px; color: var(--text); }
+  .primary { background: var(--accent); color: #22150b; font-weight: 800; padding: 15px 18px; font-size: 17px; letter-spacing: .3px; }
+  .secondary { background: var(--panel); border: 1px solid var(--line); padding: 13px 16px; font-weight: 600; }
+  .small { padding: 9px 12px; font-size: 14px; flex: 1; }
+  .link { background: none; color: var(--muted); text-decoration: underline; padding: 8px; align-self: center; }
+  button:active { transform: scale(.98); }
+  button:disabled { opacity: .5; }
+  .hint { color: var(--muted); font-size: 14px; margin: 4px 0 0; text-align: center; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .card h2 { margin: 0; font-size: 16px; display: flex; gap: 10px; align-items: center; }
+  .num { width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #22150b; font-size: 13px; display: inline-grid; place-items: center; flex: none; }
+  .card p { margin: 0; color: var(--muted); font-size: 14px; }
+  .qr { background: #fff; border-radius: 12px; padding: 10px; width: 100%; max-width: 300px; aspect-ratio: 1; align-self: center; display: grid; place-items: center; }
+  .qr svg { width: 100%; height: 100%; display: block; }
+  .qr .fallback { color: #333; font-size: 11px; word-break: break-all; }
+  .row { display: flex; gap: 8px; }
+  details summary { color: var(--muted); font-size: 14px; cursor: pointer; }
+  details[open] summary { margin-bottom: 8px; }
+  textarea { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font: 13px/1.3 ui-monospace, monospace; resize: vertical; margin-bottom: 8px; -webkit-user-select: text; user-select: text; }
+  .spinner { width: 34px; height: 34px; border: 4px solid #ddd; border-top-color: #888; border-radius: 50%; animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .status-line { text-align: center; color: var(--muted); font-size: 14px; min-height: 20px; }
+
+  /* duel lobby */
+  .score { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; }
+  .player { background: var(--panel); border: 2px solid var(--line); border-radius: 14px; padding: 10px; text-align: center; }
+  .player.ready { border-color: var(--win); }
+  .player .lbl { color: var(--muted); font-size: 13px; }
+  .player .n { font: 900 30px/1.1 var(--slab); }
+  .player .st { font-size: 12px; color: var(--muted); min-height: 16px; }
+  .player.ready .st { color: var(--win); }
+  .vs { font: 900 16px var(--slab); color: var(--muted); }
+  .rules { margin: 0; padding-left: 20px; color: var(--muted); font-size: 14px; display: flex; flex-direction: column; gap: 6px; }
+  .rules b { color: var(--text); }
+  .result { text-align: center; padding: 6px 0 2px; }
+  .result[hidden] { display: none; }
+  .result .big { font: 900 40px/1.05 var(--slab); text-transform: uppercase; letter-spacing: 1px; }
+  .result .big.win { color: var(--win); } .result .big.lose { color: var(--lose); } .result .big.even { color: var(--accent); }
+  .result .detail { color: var(--muted); margin-top: 6px; font-size: 15px; }
+  .result .times { display: flex; justify-content: center; gap: 22px; margin-top: 10px; font-variant-numeric: tabular-nums; }
+  .result .times div { font-size: 13px; color: var(--muted); }
+  .result .times b { display: block; font: 800 22px var(--slab); color: var(--text); }
+  .sensor { text-align: center; font-size: 14px; color: var(--muted); min-height: 20px; }
+  .sensor.good { color: var(--win); } .sensor.bad { color: var(--accent); }
+  .tilt { height: 8px; border-radius: 4px; background: var(--line); position: relative; overflow: hidden; }
+  .tilt i { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: var(--accent); transition: width .1s; }
+
+  /* arena: full-screen during the duel so a tap anywhere fires */
+  #arena { position: fixed; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; touch-action: none; }
+  #arena[hidden] { display: none; }
+  #arena .big { font: 900 clamp(56px, 22vw, 120px)/1 var(--slab); text-transform: uppercase; letter-spacing: 2px; }
+  #arena .hint2 { font-size: 18px; margin-top: 14px; opacity: .85; }
+  #arena[data-state="armed"] { background: #0b0806; color: #7d6650; }
+  #arena[data-state="armed"] .big { font-size: clamp(40px, 13vw, 64px); animation: breathe 1.6s ease-in-out infinite; }
+  @keyframes breathe { 50% { opacity: .45; } }
+  #arena[data-state="drawn"] { background: #ffd23f; color: #1a0f05; }
+  #arena[data-state="drawn"] .big { animation: shake .12s linear infinite; }
+  @keyframes shake { 25% { transform: translate(3px, -2px); } 75% { transform: translate(-3px, 2px); } }
+  #arena[data-state="shot"] { background: #160e09; color: var(--text); }
+  #arena[data-state="foul"] { background: #4a1210; color: #ffd9d3; }
+  #arena .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+  #arena .flash.go { animation: flash .35s ease-out; }
+  @keyframes flash { from { opacity: .9; } to { opacity: 0; } }
+
+  /* scanner */
+  #scanner { position: fixed; inset: 0; background: #000; z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  #scanner[hidden] { display: none; }
+  #scanner video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  #scanner .frame { position: relative; width: 70vmin; height: 70vmin; border: 3px solid rgba(255,255,255,.85); border-radius: 20px; box-shadow: 0 0 0 9999px rgba(0,0,0,.45); }
+  #scanner .bar { position: absolute; bottom: max(28px, env(safe-area-inset-bottom)); left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  #scanner .bar p { margin: 0; color: #fff; text-shadow: 0 1px 3px #000; }
+
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(140px); background: #3a2b21; color: var(--text); padding: 12px 16px; border-radius: 12px; max-width: calc(100% - 32px); box-shadow: 0 6px 24px rgba(0,0,0,.4); transition: transform .25s; z-index: 20; font-size: 14px; text-align: center; }
+  #toast.show { transform: translateX(-50%) translateY(0); }
+  #banner { background: #4a2330; border: 1px solid #7a3446; border-radius: 12px; padding: 12px; display: flex; gap: 10px; align-items: center; justify-content: space-between; font-size: 14px; margin-bottom: 12px; }
+  #banner[hidden] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Quick-Draw Duel</h1>
+    <p class="sub">Two phones. One signal. Fastest hand wins.</p>
+  </header>
+
+  <div id="banner" hidden><span id="banner-text">Connection lost.</span><button class="secondary small" style="flex:none" data-action="restart">Start over</button></div>
+
+  <!-- Home -->
+  <section id="v-home" class="view">
+    <button class="primary" data-action="host">Host a duel</button>
+    <button class="secondary" data-action="join">Join a duel</button>
+    <p class="hint">One phone hosts and shows a QR code. The other phone scans it, then shows a code back for the host to scan. After that, the phones talk directly.</p>
+  </section>
+
+  <!-- Host -->
+  <section id="v-host" class="view" hidden>
+    <div class="card">
+      <h2><span class="num">1</span> Let your opponent scan this</h2>
+      <p>They can use their phone's camera app, or you can send them the link.</p>
+      <div class="qr" id="h-qr"><span class="spinner"></span></div>
+      <div class="row">
+        <button class="secondary small" data-action="share-host">Share link</button>
+        <button class="secondary small" data-action="copy-host">Copy link</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2><span class="num">2</span> Scan the code on their phone</h2>
+      <button class="primary" data-action="scan-answer">Scan their code</button>
+      <details>
+        <summary>Or paste their reply code</summary>
+        <textarea id="h-paste" rows="3" placeholder="Paste the reply code or link"></textarea>
+        <button class="secondary small" data-action="paste-answer">Connect</button>
+      </details>
+    </div>
+    <p class="status-line" id="h-status"></p>
+    <button class="link" data-action="restart">Cancel</button>
+  </section>
+
+  <!-- Join -->
+  <section id="v-join" class="view" hidden>
+    <div class="card">
+      <h2>Scan the host's QR code</h2>
+      <p>You can also scan it with your phone's camera app, which opens this page automatically.</p>
+      <button class="primary" data-action="scan-offer">Scan host's code</button>
+      <details>
+        <summary>Or paste the link they sent you</summary>
+        <textarea id="j-paste" rows="3" placeholder="Paste the host's link"></textarea>
+        <button class="secondary small" data-action="paste-offer">Join</button>
+      </details>
+    </div>
+    <button class="link" data-action="restart">Cancel</button>
+  </section>
+
+  <!-- Guest reply -->
+  <section id="v-reply" class="view" hidden>
+    <div class="card">
+      <h2>Show this to the host</h2>
+      <p>The host taps "Scan their code" and points their phone at this screen.</p>
+      <div class="qr" id="r-qr"><span class="spinner"></span></div>
+      <div class="row">
+        <button class="secondary small" data-action="share-reply">Share code</button>
+        <button class="secondary small" data-action="copy-reply">Copy code</button>
+      </div>
+    </div>
+    <p class="status-line" id="r-status">Waiting for the host…</p>
+    <button class="link" data-action="restart">Cancel</button>
+  </section>
+
+  <!-- Message (used when a reply link is opened in a new tab) -->
+  <section id="v-msg" class="view" hidden>
+    <div class="card"><h2 id="m-title"></h2><p id="m-text"></p></div>
+    <button class="link" data-action="restart">Back to start</button>
+  </section>
+
+  <!-- Duel lobby / results -->
+  <section id="v-game" class="view" hidden>
+    <div class="score">
+      <div class="player" id="p-me"><div class="lbl">You</div><div class="n">0</div><div class="st"></div></div>
+      <div class="vs">VS</div>
+      <div class="player" id="p-them"><div class="lbl">Opponent</div><div class="n">0</div><div class="st"></div></div>
+    </div>
+
+    <div class="result" id="result" hidden>
+      <div class="big" id="res-big"></div>
+      <div class="detail" id="res-detail"></div>
+      <div class="times" id="res-times"></div>
+    </div>
+
+    <div class="card" id="rules">
+      <ol class="rules">
+        <li>Face each other, a few steps apart.</li>
+        <li>Hold your phone like a pistol, <b>pointing at the ground</b>, screen facing you.</li>
+        <li>Wait for the <b>DRAW!</b> signal (sound, buzz and flash).</li>
+        <li><b>Raise</b> your phone at your opponent and <b>tap the screen</b> to fire.</li>
+        <li>Raise or tap before the signal and you lose the round.</li>
+      </ol>
+    </div>
+
+    <div class="sensor" id="sensor"></div>
+    <div class="tilt" id="tilt" hidden><i></i></div>
+    <button class="primary" id="ready-btn" data-action="ready">I'm ready</button>
+    <p class="status-line" id="g-status"></p>
+  </section>
+</main>
+
+<div id="arena" hidden><div class="flash"></div><div class="big" id="a-big"></div><div class="hint2" id="a-small"></div></div>
+
+<div id="scanner" hidden>
+  <video id="scan-video" playsinline muted></video>
+  <div class="frame"></div>
+  <div class="bar"><p>Point at the QR code</p><button class="secondary" data-action="scan-cancel">Cancel</button></div>
+</div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+/* =====================================================================
+   Quick-Draw Duel: peer-to-peer over a WebRTC data channel.
+   Signaling (the one-time handshake) happens by QR code / link, so the
+   only server involved is whatever static host serves this file, plus a
+   public STUN server that helps phones discover their public address.
+   ===================================================================== */
+
+const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
+// For phones on mobile data you may need a TURN relay, e.g.:
+// { urls: 'turn:your.turn.server:3478', username: 'user', credential: 'pass' }
+
+const $ = s => document.querySelector(s);
+const BASE = location.href.split('#')[0];
+let pc, dc, role, hostLink = '', replyLink = '', connected = false, connectTimer;
+
+function show(id) { document.querySelectorAll('.view').forEach(v => v.hidden = v.id !== id); }
+let toastTimer;
+function toast(msg, ms = 3200) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+/* ---------- Compact SDP codec ----------
+   A full SDP is ~1 KB, which makes a dense QR code. For a data-channel-only
+   connection only a few fields matter, so we pack just those:
+   version~ufrag~pwd~fpAlg~fingerprint(b64url)~setup~mid~candidates          */
+const SETUP_ENC = { actpass: 'x', active: 'a', passive: 'p' };
+const SETUP_DEC = { x: 'actpass', a: 'active', p: 'passive' };
+
+function hexToB64u(hex) {
+  const bin = hex.match(/../g).map(h => String.fromCharCode(parseInt(h, 16))).join('');
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function b64uToHex(s) {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  return [...bin].map(c => c.charCodeAt(0).toString(16).padStart(2, '0').toUpperCase()).join(':');
+}
+
+function packSdp(sdp) {
+  const get = re => (sdp.match(re) || [])[1];
+  const fp = sdp.match(/a=fingerprint:(\S+) ([0-9A-Fa-f:]+)/);
+  const cands = [];
+  for (const m of sdp.matchAll(/a=candidate:\S+ (\d+) (\S+) \d+ (\S+) (\d+) typ (\w+)/g)) {
+    const [, comp, proto, ip, port, typ] = m;
+    if (comp !== '1' || proto.toLowerCase() !== 'udp' || (typ !== 'host' && typ !== 'srflx')) continue;
+    const c = `${typ[0]},${ip},${port}`;
+    if (!cands.includes(c)) cands.push(c);
+  }
+  return ['1', get(/a=ice-ufrag:(\S+)/), get(/a=ice-pwd:(\S+)/), fp[1], hexToB64u(fp[2].replace(/:/g, '')),
+    SETUP_ENC[get(/a=setup:(\S+)/)] || 'x', get(/a=mid:(\S+)/) || '0', cands.slice(0, 6).join('|')].join('~');
+}
+
+function unpackSdp(code, type) {
+  const p = code.trim().split('~');
+  if (p[0] !== '1' || p.length !== 8) throw new Error('Not a game code');
+  const [, ufrag, pwd, alg, fp, s, mid, cs] = p;
+  const lines = [
+    'v=0', 'o=- 1 2 IN IP4 127.0.0.1', 's=-', 't=0 0', `a=group:BUNDLE ${mid}`, 'a=msid-semantic: WMS',
+    'm=application 9 UDP/DTLS/SCTP webrtc-datachannel', 'c=IN IP4 0.0.0.0',
+    `a=ice-ufrag:${ufrag}`, `a=ice-pwd:${pwd}`, `a=fingerprint:${alg} ${b64uToHex(fp)}`,
+    `a=setup:${SETUP_DEC[s]}`, `a=mid:${mid}`, 'a=sctp-port:5000', 'a=max-message-size:262144'
+  ];
+  (cs ? cs.split('|') : []).forEach((c, i) => {
+    const [t, ip, port] = c.split(',');
+    if (t === 'h') lines.push(`a=candidate:${i + 1} 1 udp ${2122260223 - i} ${ip} ${port} typ host`);
+    else lines.push(`a=candidate:${i + 1} 1 udp ${1686052607 - i} ${ip} ${port} typ srflx raddr 0.0.0.0 rport 0`);
+  });
+  lines.push('a=end-of-candidates');
+  return { type, sdp: lines.join('\r\n') + '\r\n' };
+}
+const isOfferCode = code => code.split('~')[5] === 'x';
+
+function extractCode(text) {
+  text = (text || '').trim();
+  const m = text.match(/#[oa]=(.+)$/);
+  try { return decodeURIComponent(m ? m[1] : text); } catch { return text; }
+}
+
+/* ---------- WebRTC ---------- */
+function newPeer() {
+  pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  // Pre-negotiated channel: both sides create it with the same id, so no extra handshake.
+  dc = pc.createDataChannel('game', { negotiated: true, id: 0 });
+  dc.onopen = onConnected;
+  dc.onmessage = e => { try { onMessage(JSON.parse(e.data)); } catch {} };
+  dc.onclose = () => connected && lost('Connection closed.');
+  pc.onconnectionstatechange = () => {
+    const s = pc.connectionState;
+    if (!connected) return;
+    if (s === 'failed') lost('Connection lost.');
+    else if (s === 'disconnected') setBanner('Connection interrupted, trying to recover…', false);
+    else if (s === 'connected') setBanner(null);
+  };
+}
+// We wait for all ICE candidates so the whole handshake fits in a single code.
+function iceGathered(timeout = 3000) {
+  return new Promise(res => {
+    if (pc.iceGatheringState === 'complete') return res();
+    const t = setTimeout(res, timeout);
+    pc.addEventListener('icegatheringstatechange', () => {
+      if (pc.iceGatheringState === 'complete') { clearTimeout(t); res(); }
+    });
+  });
+}
+
+async function startHost() {
+  role = 'host'; show('v-host'); newPeer();
+  await pc.setLocalDescription(await pc.createOffer());
+  await iceGathered();
+  hostLink = BASE + '#o=' + encodeURIComponent(packSdp(pc.localDescription.sdp));
+  renderQR($('#h-qr'), hostLink);
+  listenForRelayedAnswer();
+}
+
+async function acceptAnswer(text) {
+  if (role !== 'host' || !pc || pc.signalingState !== 'have-local-offer') return;
+  const code = extractCode(text);
+  let desc;
+  try { desc = unpackSdp(code, 'answer'); } catch { return toast("That doesn't look like a reply code."); }
+  if (isOfferCode(code)) return toast("That's a host code. Scan the code shown on your friend's phone.");
+  try { await pc.setRemoteDescription(desc); }
+  catch (e) { return toast('Could not use that code: ' + e.message); }
+  $('#h-status').textContent = 'Connecting…';
+  watchConnect('#h-status');
+}
+
+async function startGuest(text) {
+  const code = extractCode(text);
+  let desc;
+  try { desc = unpackSdp(code, 'offer'); } catch { show('v-join'); return toast("That doesn't look like a game link."); }
+  if (!isOfferCode(code)) { show('v-join'); return toast("That's a reply code. Scan the host's code instead."); }
+  history.replaceState(null, '', BASE);
+  role = 'guest'; show('v-reply'); newPeer();
+  try {
+    await pc.setRemoteDescription(desc);
+    await pc.setLocalDescription(await pc.createAnswer());
+  } catch (e) { show('v-join'); return toast('Could not join: ' + e.message); }
+  await iceGathered();
+  replyLink = BASE + '#a=' + encodeURIComponent(packSdp(pc.localDescription.sdp));
+  renderQR($('#r-qr'), replyLink);
+  watchConnect('#r-status', 60000);
+}
+
+function watchConnect(statusSel, ms = 15000) {
+  clearTimeout(connectTimer);
+  connectTimer = setTimeout(() => {
+    if (!connected) $(statusSel).textContent =
+      'Still connecting… If you are both on mobile data, try joining the same Wi-Fi network, and if one side is a laptop, check its firewall.';
+  }, ms);
+}
+
+/* If the host scans the guest's code with their camera app instead of the in-page
+   scanner, the reply link opens in a new tab. That tab passes the code to the
+   host's original tab through a BroadcastChannel (same browser, same site). */
+const bc = 'BroadcastChannel' in window ? new BroadcastChannel('qd-p2p') : null;
+function listenForRelayedAnswer() {
+  if (!bc) return;
+  bc.onmessage = e => {
+    if (e.data && e.data.answer && role === 'host' && pc.signalingState === 'have-local-offer') {
+      bc.postMessage({ ack: true });
+      acceptAnswer(e.data.answer);
+    }
+  };
+}
+function relayAnswer(hash) {
+  history.replaceState(null, '', BASE);
+  const code = extractCode(hash);
+  let acked = false;
+  if (bc) {
+    bc.onmessage = e => {
+      if (e.data && e.data.ack) {
+        acked = true;
+        showMsg('Code delivered ✓', 'Switch back to the tab where you are hosting the game. You can close this one.');
+      }
+    };
+    bc.postMessage({ answer: code });
+  }
+  setTimeout(() => {
+    if (!acked) showMsg('Scan this from inside the game',
+      'This is a reply code. On the hosting phone, tap "Scan their code" inside the game page and scan it from there.');
+  }, 1200);
+}
+function showMsg(title, text) { $('#m-title').textContent = title; $('#m-text').textContent = text; show('v-msg'); }
+
+function lost(msg) { connected = false; setBanner(msg, true); render(); }
+function setBanner(msg) {
+  $('#banner').hidden = !msg;
+  if (msg) $('#banner-text').textContent = msg;
+}
+function send(obj) { if (dc && dc.readyState === 'open') dc.send(JSON.stringify(obj)); }
+
+/* ---------- QR rendering & scanning ---------- */
+function renderQR(el, text) {
+  if (typeof qrcode !== 'function') {
+    el.innerHTML = '<div class="fallback">QR library failed to load. Use the share/copy buttons instead.</div>';
+    return;
+  }
+  const qr = qrcode(0, 'L'); qr.addData(text); qr.make();
+  el.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+}
+
+let scanStream = null, scanRaf = 0, scanCallback = null;
+function loadScript(src) {
+  return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+}
+async function getDetector() {
+  if ('BarcodeDetector' in window) {
+    try {
+      if ((await BarcodeDetector.getSupportedFormats()).includes('qr_code')) {
+        const d = new BarcodeDetector({ formats: ['qr_code'] });
+        return async v => { const r = await d.detect(v); return r[0] && r[0].rawValue; };
+      }
+    } catch {}
+  }
+  // Fallback for browsers without BarcodeDetector (e.g. iPhone Safari).
+  if (!window.jsQR) await loadScript('https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js');
+  const c = document.createElement('canvas'), ctx = c.getContext('2d', { willReadFrequently: true });
+  return async v => {
+    if (!v.videoWidth) return null;
+    const s = Math.min(1, 800 / Math.max(v.videoWidth, v.videoHeight));
+    c.width = v.videoWidth * s | 0; c.height = v.videoHeight * s | 0;
+    ctx.drawImage(v, 0, 0, c.width, c.height);
+    const r = jsQR(ctx.getImageData(0, 0, c.width, c.height).data, c.width, c.height, { inversionAttempts: 'dontInvert' });
+    return r && r.data;
+  };
+}
+const CAMERA_ERRORS = {
+  NotAllowedError: 'Camera permission was blocked. Allow the camera for this site in the browser\'s site settings (and for the browser app in Android settings), then reload.',
+  SecurityError: 'Camera permission was blocked. Allow the camera for this site in the browser\'s site settings, then reload.',
+  NotFoundError: 'No camera was found on this device.',
+  NotReadableError: 'The camera is busy. Close other apps using it, then try again.',
+  OverconstrainedError: 'The camera could not be started with the requested settings.',
+};
+async function scan(callback) {
+  if (!window.isSecureContext)
+    return toast('The camera only works when the page is opened over https:// (not http:// or a local file). Use paste instead.', 7000);
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+    return toast('This browser does not allow camera access here. If you opened the link inside an app (WhatsApp, Messenger…), open it in your browser instead.', 7000);
+  scanCallback = callback;
+  $('#scanner').hidden = false;
+  let detect;
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+  } catch (e) {
+    stopScan();
+    return toast(CAMERA_ERRORS[e.name] || `Could not start the camera (${e.name}: ${e.message}).`, 8000);
+  }
+  try { detect = await getDetector(); }
+  catch (e) {
+    stopScan();
+    return toast('The QR scanner could not load (it comes from cdn.jsdelivr.net, which may be blocked by an ad blocker or Brave Shields). Use paste instead.', 8000);
+  }
+  const v = $('#scan-video'); v.srcObject = scanStream; await v.play().catch(() => {});
+  let last = 0, busy = false;
+  const tick = async t => {
+    if (!scanStream) return;
+    scanRaf = requestAnimationFrame(tick);
+    if (busy || t - last < 150) return;
+    busy = true; last = t;
+    try {
+      const val = await detect(v);
+      if (val && scanStream) { const cb = scanCallback; stopScan(); cb(val); }
+    } catch {} finally { busy = false; }
+  };
+  scanRaf = requestAnimationFrame(tick);
+}
+function stopScan() {
+  cancelAnimationFrame(scanRaf);
+  if (scanStream) scanStream.getTracks().forEach(t => t.stop());
+  scanStream = null; $('#scanner').hidden = true; $('#scan-video').srcObject = null;
+}
+
+async function shareOrCopy(text, share) {
+  if (share && navigator.share) {
+    try { await navigator.share({ title: 'Quick-Draw Duel', text: 'Duel me:', url: text }); return; } catch (e) { if (e.name === 'AbortError') return; }
+  }
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t);
+    t.select(); document.execCommand('copy'); t.remove();
+  }
+  toast('Copied to clipboard.');
+}
+
+
+/* ---------- Sound (synthesised, no files) ---------- */
+let actx = null;
+function audioInit() {
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+  } catch {}
+}
+function tone(freq, start, dur, type = 'sine', gain = 0.5) {
+  if (!actx) return;
+  const t = actx.currentTime + start, o = actx.createOscillator(), g = actx.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur + 0.05);
+}
+function noise(dur, gain, cutoff) {
+  if (!actx) return;
+  const len = actx.sampleRate * dur | 0, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+  const s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
+  s.buffer = buf; f.type = 'lowpass'; f.frequency.value = cutoff; g.gain.value = gain;
+  s.connect(f).connect(g).connect(actx.destination); s.start();
+}
+const sfx = {
+  heartbeat() { tone(55, 0, 0.18, 'sine', 0.7); tone(50, 0.22, 0.2, 'sine', 0.5); },
+  draw() { [0, 0.16].forEach(s => { tone(1320, s, 0.14, 'square', 0.35); tone(1980, s, 0.14, 'square', 0.2); }); tone(880, 0.32, 0.5, 'triangle', 0.5); },
+  bang() { noise(0.45, 1.2, 3500); tone(70, 0, 0.25, 'sine', 0.9); },
+  click() { tone(2400, 0, 0.03, 'square', 0.3); tone(900, 0.05, 0.05, 'square', 0.2); },
+  win() { [523, 659, 784, 1047].forEach((f, i) => tone(f, i * 0.11, 0.25, 'triangle', 0.4)); },
+  lose() { [392, 330, 262, 196].forEach((f, i) => tone(f, i * 0.16, 0.3, 'sawtooth', 0.18)); },
+};
+function buzz(p) { try { navigator.vibrate && navigator.vibrate(p); } catch {} }
+
+/* ---------- Keep the screen awake while dueling ---------- */
+let wakeLock = null;
+async function keepAwake() {
+  try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => wakeLock = null); } } catch {}
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && connected) keepAwake(); });
+
+/* ---------- Motion sensor ----------
+   deviceorientation's beta angle tells us where the top edge of the phone points:
+   sin(beta) = -1 → straight at the ground, 0 → level (aimed), +1 → at the sky.
+   This holds whichever way the screen faces, so players can hold it how they like. */
+let elev = null, sensorOK = false, tapMode = false, sensorAsked = false;
+const HOLSTER = -50, RAISED = -35, AIM_MIN = -30, AIM_MAX = 60;   // degrees
+window.addEventListener('deviceorientation', e => {
+  if (e.beta == null) return;
+  sensorOK = true;
+  elev = Math.asin(Math.sin(e.beta * Math.PI / 180)) * 180 / Math.PI;
+  onTilt();
+});
+const holstered = () => tapMode || (elev != null && elev < HOLSTER);
+const aimed = () => tapMode || (elev != null && elev > AIM_MIN && elev < AIM_MAX);
+
+async function askSensor() {
+  let denied = false;
+  // iPhone needs explicit permission, and it must be requested from a tap.
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try {
+      denied = (await DeviceOrientationEvent.requestPermission()) !== 'granted';
+    } catch {}
+  }
+  sensorAsked = true;
+  // Give the sensor a moment to report; laptops and blocked sensors never do.
+  await new Promise(r => setTimeout(r, 900));
+  if (!sensorOK) {
+    tapMode = true;
+    if (denied) toast('Motion access was denied, so you are in tap-only mode. To allow it, close this tab and reopen the page.', 7000);
+  }
+}
+
+/* ---------- Clock sync ----------
+   Both phones must give the DRAW signal at the same instant. The guest measures
+   the offset between its clock and the host's with a few ping/pongs (NTP-style),
+   keeping the sample with the shortest round trip. */
+let offset = 0, synced = false;
+const pending = {};
+async function syncClock() {
+  let best = Infinity;
+  for (let i = 0; i < 10; i++) {
+    const sent = performance.now();
+    const h = await new Promise(res => { pending[i] = res; send({ t: 'ping', id: i }); setTimeout(() => res(null), 1000); });
+    const now = performance.now(), rtt = now - sent;
+    if (h != null && rtt < best) { best = rtt; offset = h - (sent + rtt / 2); }
+    await new Promise(r => setTimeout(r, 60));
+  }
+  synced = true; send({ t: 'synced' }); render();
+}
+
+/* ---------- Duel state ----------
+   lobby → (both ready & holstered) → armed → drawn → shot → result
+   Each phone times its OWN player from its OWN signal, so network lag
+   never affects who wins. Each side sends exactly one outcome per round. */
+let state = 'lobby', round = 0, pressedReady = false, readySent = null,
+    peerReady = false, peerTap = false, drawTimer = 0, beatTimer = 0, shotTimer = 0, drawAt = 0;
+let myOut = null; const peerOuts = {};
+const score = { me: 0, them: 0 };
+let last = null;   // last result, for display
+
+function onConnected() {
+  connected = true; clearTimeout(connectTimer); setBanner(null);
+  show('v-game'); buzz(40);
+  if (role === 'guest') syncClock();
+  render();
+}
+
+function pressReady() {
+  audioInit(); keepAwake();
+  const go = () => { pressedReady = true; last = null; updateReady(); render(); };
+  if (!sensorAsked) askSensor().then(go); else go();
+}
+
+function updateReady() {
+  const r = pressedReady && holstered() && state === 'lobby';
+  if (r !== readySent) { readySent = r; send({ t: 'ready', v: r, tap: tapMode }); }
+  maybeArm();
+}
+
+function maybeArm() {
+  if (role !== 'host' || state !== 'lobby' || !readySent || !peerReady || !synced) return;
+  round++;
+  const at = performance.now() + 2500 + Math.random() * 4500;   // 2.5 to 7 s of suspense
+  send({ t: 'arm', r: round, at });
+  startArmed(round, at);
+}
+
+function startArmed(r, localAt) {
+  round = r; state = 'armed'; myOut = null;
+  clearTimers();
+  drawTimer = setTimeout(fireDraw, Math.max(0, localAt - performance.now()));
+  sfx.heartbeat(); beatTimer = setInterval(sfx.heartbeat, 900);
+  render();
+}
+
+function fireDraw() {
+  clearInterval(beatTimer);
+  state = 'drawn'; drawAt = performance.now();
+  sfx.draw(); buzz([250]);
+  const f = $('#arena .flash'); f.classList.remove('go'); void f.offsetWidth; f.classList.add('go');
+  f.addEventListener('animationend', () => f.classList.remove('go'), { once: true });
+  shotTimer = setTimeout(() => { if (!myOut) finish({ foul: false, ms: null }); }, 5000);
+  render();
+}
+
+function foul() {
+  if (myOut || state !== 'armed') return;
+  sfx.click(); buzz([60, 40, 60]);
+  finish({ foul: true, ms: null });
+}
+
+function fire() {
+  if (state === 'armed') return foul();
+  if (state !== 'drawn' || myOut) return;
+  if (!aimed()) { $('#a-small').textContent = 'Raise it and aim!'; return; }
+  const ms = performance.now() - drawAt;
+  sfx.bang(); buzz(80);
+  finish({ foul: false, ms });
+}
+
+function finish(out) {
+  clearTimers();
+  myOut = out; send({ t: 'out', r: round, ...out });
+  state = 'shot'; render(); resolve();
+}
+
+function onTilt() {
+  if (state === 'armed' && !tapMode && elev > RAISED) foul();
+  else if (state === 'lobby' && pressedReady) updateReady();
+  if (state === 'lobby') render();
+}
+
+function resolve() {
+  const p = peerOuts[round];
+  if (!myOut || !p) return;
+  let res;
+  if (myOut.foul && p.foul) res = 'both-foul';
+  else if (myOut.foul) res = 'lose';
+  else if (p.foul) res = 'win';
+  else {
+    const a = myOut.ms ?? Infinity, b = p.ms ?? Infinity;
+    res = a === b ? 'even' : a < b ? 'win' : 'lose';
+  }
+  if (res === 'win') { score.me++; sfx.win(); }
+  if (res === 'lose') { score.them++; sfx.lose(); }
+  last = { res, me: myOut, them: p };
+  state = 'lobby'; pressedReady = false; readySent = false; peerReady = false;
+  render();
+}
+
+function abortRound() {
+  clearTimers(); state = 'lobby'; myOut = null; readySent = null; peerReady = false;
+  updateReady(); render();
+}
+
+function clearTimers() { clearTimeout(drawTimer); clearInterval(beatTimer); clearTimeout(shotTimer); }
+
+function onMessage(m) {
+  switch (m.t) {
+    case 'ping': send({ t: 'pong', id: m.id, h: performance.now() }); break;
+    case 'pong': if (pending[m.id]) { pending[m.id](m.h); delete pending[m.id]; } break;
+    case 'synced': synced = true; maybeArm(); break;
+    case 'ready': peerReady = m.v; peerTap = m.tap; maybeArm(); render(); break;
+    case 'arm':
+      // If we stopped being ready while this message was in flight, call it off.
+      if (state !== 'lobby' || !(pressedReady && holstered())) { send({ t: 'abort', r: m.r }); abortRound(); break; }
+      startArmed(m.r, m.at - offset);
+      break;
+    case 'abort': if (m.r === round && state === 'armed') abortRound(); break;
+    case 'out':
+      peerOuts[m.r] = m;
+      if (m.r !== round) break;
+      // Opponent drew early: the round is ours, no need to wait for the signal.
+      if (m.foul && !myOut && (state === 'armed' || state === 'drawn')) finish({ foul: false, ms: null, byForfeit: true });
+      else resolve();
+      break;
+  }
+}
+
+/* ---------- Rendering ---------- */
+const fmt = ms => ms == null ? '—' : (ms / 1000).toFixed(3) + ' s';
+
+function renderSensor() {
+  const s = $('#sensor'), bar = $('#tilt');
+  if (!sensorAsked) { s.textContent = ''; s.className = 'sensor'; bar.hidden = true; return; }
+  if (tapMode) {
+    s.className = 'sensor bad';
+    s.textContent = 'No motion sensor found: tap-only mode. Just tap as fast as you can on DRAW!';
+    bar.hidden = true; return;
+  }
+  bar.hidden = false;
+  bar.firstElementChild.style.width = Math.max(0, Math.min(100, (elev + 90) / 1.8)) + '%';
+  if (holstered()) { s.className = 'sensor good'; s.textContent = 'Holstered ✓ Keep it pointed at the ground.'; }
+  else { s.className = 'sensor bad'; s.textContent = 'Point your phone at the ground to holster.'; }
+}
+
+function render() {
+  if (!connected && $('#v-game').hidden) return;
+  // Arena (full screen during the duel)
+  const arena = $('#arena');
+  const inDuel = state === 'armed' || state === 'drawn' || state === 'shot';
+  arena.hidden = !inDuel || !connected;
+  if (inDuel) {
+    const ds = state === 'shot' && myOut && myOut.foul ? 'foul' : state;
+    arena.dataset.state = ds;
+    const big = $('#a-big'), small = $('#a-small');
+    if (ds === 'armed') { big.textContent = 'Steady…'; small.textContent = 'Keep it pointed down. Wait for the signal.'; }
+    else if (ds === 'drawn') { big.textContent = 'Draw!'; small.textContent = tapMode ? 'Tap!' : 'Raise and tap!'; }
+    else if (ds === 'foul') { big.textContent = 'Too early!'; small.textContent = 'Waiting for your opponent…'; }
+    else { big.textContent = myOut.ms != null ? 'Bang!' : (myOut.byForfeit ? 'Hold fire' : 'Too slow'); small.textContent = myOut.ms != null ? fmt(myOut.ms) + ' · waiting for your opponent…' : 'Waiting for your opponent…'; }
+  }
+
+  // Score & readiness
+  $('#p-me .n').textContent = score.me; $('#p-them .n').textContent = score.them;
+  const meReady = !!readySent, themReady = peerReady;
+  $('#p-me').classList.toggle('ready', meReady); $('#p-them').classList.toggle('ready', themReady);
+  $('#p-me .st').textContent = meReady ? 'ready' : pressedReady ? 'holster!' : '';
+  $('#p-them .st').textContent = themReady ? 'ready' + (peerTap ? ' (tap-only)' : '') : '';
+
+  // Last result
+  const rb = $('#result');
+  rb.hidden = !last;
+  if (last) {
+    const big = $('#res-big'), det = $('#res-detail');
+    const text = { win: 'You win!', lose: 'You lose', even: 'Dead heat', 'both-foul': 'Both too early' }[last.res];
+    big.textContent = text; big.className = 'big ' + (last.res === 'win' ? 'win' : last.res === 'lose' ? 'lose' : 'even');
+    let d = '';
+    if (last.res === 'both-foul') d = 'Nobody scores. Wait for the signal!';
+    else if (last.them.foul) d = 'Your opponent drew before the signal.';
+    else if (last.me.foul) d = 'You drew before the signal.';
+    else if (last.me.ms == null && last.them.ms == null) d = 'Nobody fired in time.';
+    else if (last.res === 'win') d = `Faster by ${fmt((last.them.ms ?? 5000) - last.me.ms)}`;
+    else if (last.res === 'lose') d = `Slower by ${fmt((last.me.ms ?? 5000) - last.them.ms)}`;
+    det.textContent = d;
+    $('#res-times').innerHTML = (last.me.foul || last.them.foul) ? '' :
+      `<div>You<b>${fmt(last.me.ms)}</b></div><div>Opponent<b>${fmt(last.them.ms)}</b></div>`;
+  }
+  $('#rules').hidden = !!last || score.me + score.them > 0;
+
+  // Button & status
+  const btn = $('#ready-btn');
+  btn.hidden = pressedReady;
+  btn.textContent = last ? 'Next duel' : "I'm ready";
+  let st = '';
+  if (!connected) st = 'Disconnected';
+  else if (!synced) st = 'Synchronising clocks…';
+  else if (pressedReady && !holstered()) st = 'Point your phone at the ground.';
+  else if (pressedReady && !peerReady) st = 'Waiting for your opponent…';
+  else if (pressedReady) st = 'Steady…';
+  $('#g-status').textContent = st;
+  renderSensor();
+}
+
+/* ---------- Wiring ---------- */
+$('#arena').addEventListener('pointerdown', e => { e.preventDefault(); fire(); });
+const actions = {
+  host: startHost,
+  join: () => show('v-join'),
+  restart: () => { location.href = BASE; },
+  'share-host': () => hostLink && shareOrCopy(hostLink, true),
+  'copy-host': () => hostLink && shareOrCopy(hostLink, false),
+  'share-reply': () => replyLink && shareOrCopy(replyLink, true),
+  'copy-reply': () => replyLink && shareOrCopy(replyLink, false),
+  'scan-answer': () => scan(acceptAnswer),
+  'paste-answer': () => acceptAnswer($('#h-paste').value),
+  'scan-offer': () => scan(startGuest),
+  'paste-offer': () => startGuest($('#j-paste').value),
+  'scan-cancel': stopScan,
+  ready: pressReady,
+};
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-action]');
+  if (b && actions[b.dataset.action]) actions[b.dataset.action]();
+});
+
+if (location.hash.startsWith('#o=')) startGuest(location.hash);
+else if (location.hash.startsWith('#a=')) relayAnswer(location.hash);
+else show('v-home');
+</script>
+</body>
+</html>
