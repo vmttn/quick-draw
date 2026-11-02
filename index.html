@@ -329,10 +329,26 @@ function iceGathered(timeout = 3000) {
   });
 }
 
+/* Browsers hide a device's real Wi-Fi address from WebRTC behind a random
+   "xxxx.local" name. Laptops can look those names up, but phones often can't,
+   so two phones on the same Wi-Fi may never find each other. A page that has
+   camera permission gets the real address instead (RFC 8828), and only one side
+   needs it. The host needs the camera anyway to scan the reply, so we ask for it
+   first and keep it on (invisibly) while the addresses are gathered. */
+async function unlockLocalAddress() {
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return null;
+  try { return await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); } catch { return null; }
+}
+
 async function startHost() {
-  role = 'host'; show('v-host'); newPeer();
+  role = 'host'; show('v-host');
+  $('#h-status').textContent = 'Allow the camera: you will use it to scan the reply, and it helps the phones find each other on Wi-Fi.';
+  const cam = await unlockLocalAddress();
+  $('#h-status').textContent = '';
+  newPeer();
   await pc.setLocalDescription(await pc.createOffer());
   await iceGathered();
+  if (cam) cam.getTracks().forEach(t => t.stop());
   hostLink = BASE + '#o=' + encodeURIComponent(packSdp(pc.localDescription.sdp));
   renderQR($('#h-qr'), hostLink);
   listenForRelayedAnswer();
@@ -367,11 +383,27 @@ async function startGuest(text) {
   watchConnect('#r-status', 60000);
 }
 
+function describeAddresses(sdp) {
+  if (!sdp) return 'nothing';
+  const parts = [];
+  for (const c of (packSdp(sdp).split('~')[7] || '').split('|').filter(Boolean)) {
+    const [t, ip] = c.split(',');
+    parts.push(t === 's' ? 'public ' + ip : ip.endsWith('.local') ? 'hidden local name' : 'local ' + ip);
+  }
+  return parts.length ? [...new Set(parts)].join(', ') : 'no addresses';
+}
 function watchConnect(statusSel, ms = 15000) {
   clearTimeout(connectTimer);
   connectTimer = setTimeout(() => {
-    if (!connected) $(statusSel).textContent =
-      'Still connecting… If you are both on mobile data, try joining the same Wi-Fi network, and if one side is a laptop, check its firewall.';
+    if (connected) return;
+    let mine = '', theirs = '';
+    try { mine = describeAddresses(pc.localDescription && pc.localDescription.sdp); } catch {}
+    try { theirs = describeAddresses(pc.remoteDescription && pc.remoteDescription.sdp); } catch {}
+    const bothHidden = /^hidden local name/.test(mine) && !/local \d/.test(mine) && /^hidden local name/.test(theirs) && !/local \d/.test(theirs);
+    $(statusSel).textContent = 'Still connecting… ' + (bothHidden
+      ? 'Both devices hid their Wi-Fi address. Start over and allow the camera when hosting.'
+      : 'Check both devices are on the same Wi-Fi (not mobile data), and if one is a laptop, check its firewall.')
+      + ` [This device: ${mine}. Other device: ${theirs}. State: ${pc.iceConnectionState}]`;
   }, ms);
 }
 
