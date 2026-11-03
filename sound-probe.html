@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1310">
+<title>Sound Probe · Quick-Draw Duel</title>
+<style>
+  :root { --bg: #1a1310; --panel: #2a1f19; --line: #4a372b; --text: #f6ead8; --muted: #c2a888;
+    --accent: #e9a23b; --win: #8fd16a; --lose: #ff6b5b; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 520px; margin: 0 auto; padding: max(20px, env(safe-area-inset-top)) 16px 40px; display: flex; flex-direction: column; gap: 14px; }
+  h1 { margin: 0; font: 900 26px/1.1 "Rockwell", "Roboto Slab", Georgia, serif; color: var(--accent); text-transform: uppercase; letter-spacing: 1px; }
+  h2 { margin: 0 0 8px; font-size: 16px; }
+  p { margin: 0; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  button { font: inherit; border: 0; cursor: pointer; border-radius: 12px; color: var(--text); }
+  button:disabled { opacity: .45; }
+  .primary { background: var(--accent); color: #22150b; font-weight: 800; padding: 14px; font-size: 17px; flex: 1; }
+  .secondary { background: var(--bg); border: 1px solid var(--line); padding: 10px 12px; font-weight: 600; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chips button { background: var(--bg); border: 1px solid var(--line); padding: 6px 10px; font-size: 14px; border-radius: 999px; }
+  .chips button.on { background: var(--accent); color: #22150b; border-color: var(--accent); font-weight: 700; }
+  label { font-size: 14px; color: var(--muted); }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .status { text-align: center; min-height: 22px; }
+  .meter { height: 10px; border-radius: 5px; background: var(--bg); overflow: hidden; }
+  .meter i { display: block; height: 100%; width: 0; background: var(--win); transition: width .08s; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 4px 6px; text-align: right; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  .good { color: var(--win); } .meh { color: var(--accent); } .bad { color: var(--lose); }
+  pre { margin: 0; white-space: pre-wrap; font: 12px/1.35 ui-monospace, monospace; color: var(--muted); -webkit-user-select: text; user-select: text; }
+  ol { margin: 0; padding-left: 20px; color: var(--muted); font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Sound Probe</h1>
+    <p class="muted">Can two phones talk by sound at dueling distance? One phone sends test tones, the other listens and scores them.</p>
+  </header>
+
+  <div class="card">
+    <h2>How to test</h2>
+    <ol>
+      <li>Open this page on both phones (https). Turn the volume up on the sender.</li>
+      <li>On the <b>listening</b> phone, pick the distance and grip, then tap <b>Listen</b>.</li>
+      <li>On the <b>sending</b> phone, tap <b>Send</b> within a few seconds. Leave it sending.</li>
+      <li>Hold both phones as in a duel (pointed at the ground) until the listener shows results (about 20 s).</li>
+      <li>Repeat at 1 m, 3 m and 5 m, then tap <b>Copy all results</b> and paste them back.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>This test</h2>
+    <label>Distance</label><div class="chips" id="c-dist"></div>
+    <label>Grip</label><div class="chips" id="c-grip"></div>
+    <label>Place</label><div class="chips" id="c-place"></div>
+  </div>
+
+  <div class="card">
+    <h2>Sender settings</h2>
+    <label><input type="checkbox" id="mic-while-send" checked> Microphone open while sending (as in a real duel)</label>
+    <label>Output level <span id="gain-val"></span></label>
+    <input type="range" id="gain" min="0.05" max="1" step="0.05" value="0.7">
+  </div>
+
+  <div class="row">
+    <button class="primary" id="btn-listen">Listen</button>
+    <button class="primary" id="btn-send">Send</button>
+  </div>
+  <button class="secondary" id="btn-stop" disabled>Stop</button>
+  <div class="status" id="status"></div>
+  <div class="meter"><i id="meter"></i></div>
+
+  <div class="card" id="result" hidden>
+    <h2>Result</h2>
+    <div id="result-body"></div>
+  </div>
+
+  <div class="card">
+    <h2>Runs</h2>
+    <pre id="runs">No runs yet.</pre>
+    <div class="row">
+      <button class="secondary" id="btn-copy">Copy all results</button>
+      <button class="secondary" id="btn-clear">Clear</button>
+    </div>
+    <p class="muted" id="env"></p>
+  </div>
+</main>
+
+<script>
+'use strict';
+/* =====================================================================
+   Sound probe for the Quick-Draw sound link. Inspired by the radio probe
+   in simonw/battledrones (Apache-2.0), but written for our modem: 16 tones,
+   62.5 Hz apart, one tone per symbol (MFSK), in four candidate bands and
+   two symbol lengths. The listener decodes every symbol and reports
+   accuracy, SNR and the margin between the right tone and the best wrong one.
+   ===================================================================== */
+
+const $ = s => document.querySelector(s);
+
+/* ---------- The test signal (identical on both phones) ---------- */
+const DF = 62.5, NT = 16;                       // tone spacing (Hz) and tones per band
+const BANDS = [
+  { id: 'low 5.0k', f0: 5000 },
+  { id: 'mid 11.0k', f0: 11000 },
+  { id: 'hi 17.0k', f0: 17000 },
+  { id: 'hi 18.3k', f0: 18300 },
+];
+// T = tone length, G = silent gap after it. T is a multiple of 1/DF = 16 ms, so the tones are orthogonal.
+const MODES = [
+  { id: 'fast', T: 0.032, G: 0.008, n: 24 },
+  { id: 'slow', T: 0.064, G: 0.016, n: 12 },
+];
+const CHIRP = { f0: 3000, f1: 20000, d: 0.05 };  // sync marker at the start of each pass
+const NOISE = [0.2, 0.55];                       // silent window after the chirp (s), used as the noise floor
+const RAMP = 0.002;                              // fade in/out of each tone (s), avoids clicks
+const MIN_CLARITY = 18;                          // start marker must be this many dB over the correlation floor
+const SEGS = [];
+let PASS;
+{
+  let t = 0.6;
+  BANDS.forEach((b, bi) => MODES.forEach((m, mi) => {
+    SEGS.push({ b, m, t, seq: symbols(bi * 10 + mi + 1, m.n) });
+    t += m.n * (m.T + m.G) + 0.1;
+  }));
+  PASS = t + 0.3;
+}
+const RECORD_S = 2 * PASS + 0.5;                 // always holds one full pass, whatever the start time
+
+function symbols(seed, n) {                      // mulberry32: same sequence on every phone
+  let a = seed * 0x9e3779b9 >>> 0;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    a = a + 0x6d2b79f5 >>> 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    out.push(((t ^ t >>> 14) >>> 0) % NT);
+  }
+  return out;
+}
+
+function chirpTemplate(sr) {
+  const n = Math.round(CHIRP.d * sr), k = (CHIRP.f1 - CHIRP.f0) / CHIRP.d, r = Math.round(0.005 * sr);
+  const c = new Float32Array(n);
+  for (let j = 0; j < n; j++) {
+    const t = j / sr;
+    const w = j < r ? 0.5 - 0.5 * Math.cos(Math.PI * j / r) : j > n - r ? 0.5 - 0.5 * Math.cos(Math.PI * (n - j) / r) : 1;
+    c[j] = w * Math.sin(2 * Math.PI * (CHIRP.f0 * t + k * t * t / 2));
+  }
+  return c;
+}
+
+function renderPass(sr, gain) {
+  const out = new Float32Array(Math.round(PASS * sr));
+  const c = chirpTemplate(sr);
+  for (let j = 0; j < c.length; j++) out[j] = 0.8 * gain * c[j];
+  const r = Math.round(RAMP * sr);
+  for (const s of SEGS) {
+    const n = Math.round(s.m.T * sr);
+    s.seq.forEach((k, i) => {
+      const f = s.b.f0 + k * DF, st = Math.round((s.t + i * (s.m.T + s.m.G)) * sr);
+      for (let j = 0; j < n; j++) {
+        const w = j < r ? 0.5 - 0.5 * Math.cos(Math.PI * j / r) : j > n - r ? 0.5 - 0.5 * Math.cos(Math.PI * (n - j) / r) : 1;
+        out[st + j] = 0.9 * gain * w * Math.sin(2 * Math.PI * f * j / sr);
+      }
+    });
+  }
+  return out;
+}
+
+/* ---------- Analysis ---------- */
+function fft(re, im) {                           // in place, radix 2, length a power of two
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const a = -2 * Math.PI / len, wr = Math.cos(a), wi = Math.sin(a), h = len >> 1;
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let j = 0; j < h; j++) {
+        const p = i + j, q = p + h;
+        const tr = re[q] * cr - im[q] * ci, ti = re[q] * ci + im[q] * cr;
+        re[q] = re[p] - tr; im[q] = im[p] - ti; re[p] += tr; im[p] += ti;
+        const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+      }
+    }
+  }
+}
+
+function matchedFilter(x, c) {                   // |cross-correlation| of the recording with the chirp
+  let n = 1; while (n < x.length + c.length) n <<= 1;
+  const xr = new Float64Array(n), xi = new Float64Array(n), cr = new Float64Array(n), ci = new Float64Array(n);
+  xr.set(x); cr.set(c);
+  fft(xr, xi); fft(cr, ci);
+  for (let i = 0; i < n; i++) {                  // X * conj(C)
+    const r = xr[i] * cr[i] + xi[i] * ci[i], m = xi[i] * cr[i] - xr[i] * ci[i];
+    xr[i] = r; xi[i] = -m;                       // conjugate, so a forward FFT acts as the inverse
+  }
+  fft(xr, xi);
+  const out = new Float32Array(x.length);
+  for (let i = 0; i < x.length; i++) out[i] = Math.abs(xr[i]) / n;
+  return out;
+}
+
+function tonePower(x, st, n, f, sr) {            // Goertzel; returns amplitude² (1 = full-scale sine)
+  const c = 2 * Math.cos(2 * Math.PI * f / sr);
+  let s1 = 0, s2 = 0;
+  for (let i = 0; i < n; i++) { const s0 = x[st + i] + c * s1 - s2; s2 = s1; s1 = s0; }
+  return 4 * (s1 * s1 + s2 * s2 - c * s1 * s2) / (n * n);
+}
+
+const dB = p => 10 * Math.log10(Math.max(p, 1e-15));
+const median = a => { const s = [...a].sort((p, q) => p - q); return s.length ? s[s.length >> 1] : NaN; };
+const quantile = (a, q) => { const s = [...a].sort((p, r) => p - r); return s.length ? s[Math.floor(q * (s.length - 1))] : NaN; };
+
+function analyze(x, sr) {
+  const mf = matchedFilter(x, chirpTemplate(sr));
+  const passN = PASS * sr;
+  // Pass starts: the strongest chirp peaks, at least half a pass apart.
+  let gmax = 0;
+  for (let i = 0; i < mf.length; i++) if (mf[i] > gmax) gmax = mf[i];
+  const floor = median(mf.filter((_, i) => i % 97 === 0));
+  if (20 * Math.log10(gmax / Math.max(floor, 1e-12)) < MIN_CLARITY)
+    return { error: 'No test signal heard, or too weak to use. Is the other phone sending, with its volume up? Try closer.' };
+  const peaks = [];
+  const idx = Array.from(mf.keys()).filter(i => mf[i] > 0.35 * gmax).sort((a, b) => mf[b] - mf[a]);
+  for (const i of idx) if (!peaks.some(p => Math.abs(p - i) < passN / 2)) peaks.push(i);
+  peaks.sort((a, b) => a - b);
+  const starts = peaks.filter(p => p + passN <= x.length);
+  if (!starts.length) return { error: peaks.length ? 'Heard the start marker, but the recording ended before a full pass. Try again.' : 'No test signal heard. Is the other phone sending, with its volume up?' };
+
+  // Chirp clarity and the strongest echo after it.
+  const p0 = starts[0], clarity = 20 * Math.log10(mf[p0] / Math.max(floor, 1e-12));
+  let echo = 0, echoAt = 0;
+  for (let i = p0 + Math.round(0.003 * sr); i < p0 + Math.round(0.08 * sr) && i < mf.length; i++)
+    if (mf[i] > echo) { echo = mf[i]; echoAt = i - p0; }
+  let drift = null;
+  if (peaks.length >= 2) drift = ((peaks[1] - peaks[0]) / passN - 1) * 1e6;
+
+  let peak = 0;
+  for (let i = 0; i < x.length; i++) peak = Math.max(peak, Math.abs(x[i]));
+
+  // Score every symbol of every complete pass.
+  const rows = SEGS.map(s => {
+    const n = Math.round(s.m.T * sr), snr = [], margin = [], level = [];
+    let ok = 0, total = 0, noise = 0, nn = 0;
+    for (const t0 of starts) {
+      for (let st = t0 + Math.round(NOISE[0] * sr); st + n <= t0 + NOISE[1] * sr; st += n)
+        for (let k = 0; k < NT; k++) { noise += tonePower(x, st, n, s.b.f0 + k * DF, sr); nn++; }
+    }
+    noise /= Math.max(nn, 1);
+    for (const t0 of starts) {
+      s.seq.forEach((want, i) => {
+        const st = t0 + Math.round((s.t + i * (s.m.T + s.m.G)) * sr);
+        const E = [];
+        for (let k = 0; k < NT; k++) E.push(tonePower(x, st, n, s.b.f0 + k * DF, sr));
+        let best = 0, wrong = 0;
+        E.forEach((e, k) => { if (e > E[best]) best = k; if (k !== want) wrong = Math.max(wrong, e); });
+        total++; if (best === want) ok++;
+        snr.push(dB(E[want] / noise)); margin.push(dB(E[want] / wrong)); level.push(dB(E[want]));
+      });
+    }
+    return { band: s.b.id, mode: s.m.id, ok: ok / total, snr: median(snr), margin: median(margin),
+      margin10: quantile(margin, 0.1), level: median(level), noise: dB(noise) };
+  });
+  return { passes: starts.length, clarity, echo: 20 * Math.log10(echo / mf[p0]), echoMs: echoAt / sr * 1000, drift, peak, rows };
+}
+
+function verdict(r) {
+  if (r.ok >= 0.98 && r.margin10 >= 6) return ['good', 'good'];
+  if (r.ok >= 0.9) return ['meh', 'marginal'];
+  return ['bad', 'fails'];
+}
+
+/* ---------- Audio plumbing ---------- */
+let ctx = null, mic = null, src = null, recNode = null, busy = null, recTimer = 0;
+
+function newContext(withMic) {
+  // Order from battledrones' rig: create the context inside the tap, then pick the iOS session.
+  const C = window.AudioContext || window.webkitAudioContext;
+  const c = new C({ latencyHint: 'interactive' });
+  try { if (navigator.audioSession) navigator.audioSession.type = withMic ? 'play-and-record' : 'playback'; } catch {}
+  c.resume();
+  const b = c.createBufferSource(); b.buffer = c.createBuffer(1, 1, c.sampleRate); b.connect(c.destination); b.start();
+  return c;
+}
+
+async function openMic() {
+  if (!window.isSecureContext || !navigator.mediaDevices) throw new Error('The microphone needs https.');
+  return navigator.mediaDevices.getUserMedia({ audio: {
+    echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 1 } } });
+}
+
+const RECORDER = `
+class Rec extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Float32Array(4096); this.n = 0; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (ch) for (let i = 0; i < ch.length; i++) {
+      this.buf[this.n++] = ch[i];
+      if (this.n === this.buf.length) { this.port.postMessage(this.buf); this.buf = new Float32Array(4096); this.n = 0; }
+    }
+    return true;
+  }
+}
+registerProcessor('qd-rec', Rec);`;
+
+async function recorder(c, source, onChunk) {      // AudioWorklet if it loads, else ScriptProcessor
+  const sink = c.createGain(); sink.gain.value = 0; sink.connect(c.destination);
+  try {
+    const url = URL.createObjectURL(new Blob([RECORDER], { type: 'application/javascript' }));
+    await c.audioWorklet.addModule(url);
+    const node = new AudioWorkletNode(c, 'qd-rec', { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1, channelCountMode: 'explicit' });
+    node.port.onmessage = e => onChunk(e.data);
+    source.connect(node).connect(sink);
+    env.recorder = 'AudioWorklet';
+    return node;
+  } catch (e) {
+    const node = c.createScriptProcessor(4096, 1, 1);
+    node.onaudioprocess = e => onChunk(new Float32Array(e.inputBuffer.getChannelData(0)));
+    source.connect(node).connect(sink);
+    env.recorder = 'ScriptProcessor (' + (e && e.message || 'no AudioWorklet') + ')';
+    return node;
+  }
+}
+
+function stopAll() {
+  clearInterval(recTimer);
+  try { src && src.stop(); } catch {}
+  try { recNode && recNode.disconnect(); } catch {}
+  if (mic) mic.getTracks().forEach(t => t.stop());
+  if (ctx) ctx.close().catch(() => {});
+  try { if (navigator.audioSession) navigator.audioSession.type = 'auto'; } catch {}
+  ctx = mic = src = recNode = null; busy = null;
+  $('#meter').style.width = '0';
+  buttons();
+}
+
+function buttons() {
+  $('#btn-listen').disabled = $('#btn-send').disabled = !!busy;
+  $('#btn-stop').disabled = !busy;
+}
+const status = (t, cls = '') => { const s = $('#status'); s.textContent = t; s.className = 'status ' + cls; };
+
+const env = {};
+function micInfo(stream) {
+  const s = stream.getAudioTracks()[0].getSettings ? stream.getAudioTracks()[0].getSettings() : {};
+  return { micRate: s.sampleRate, ec: s.echoCancellation, ns: s.noiseSuppression, agc: s.autoGainControl };
+}
+
+async function startSend() {
+  busy = 'send'; buttons();
+  const withMic = $('#mic-while-send').checked;
+  try {
+    ctx = newContext(withMic);
+    if (withMic) {
+      mic = await openMic();
+      const s = ctx.createMediaStreamSource(mic), g = ctx.createGain(); g.gain.value = 0;
+      s.connect(g).connect(ctx.destination);
+      await ctx.resume();
+    }
+    if (CHIRP.f1 > ctx.sampleRate / 2 - 500) throw new Error(`Audio runs at ${ctx.sampleRate} Hz, too low for the high bands.`);
+    const gain = +$('#gain').value;
+    const pass = renderPass(ctx.sampleRate, gain);
+    const buf = ctx.createBuffer(1, pass.length, ctx.sampleRate); buf.getChannelData(0).set(pass);
+    src = ctx.createBufferSource(); src.buffer = buf; src.loop = true; src.connect(ctx.destination); src.start();
+    const t0 = ctx.currentTime;
+    recTimer = setInterval(() => {
+      if (ctx.state !== 'running') return status(`Audio is ${ctx.state}. Tap Stop, then Send again.`, 'bad');
+      status(`Sending pass ${Math.floor((ctx.currentTime - t0) / PASS) + 1} · ${ctx.sampleRate} Hz${withMic ? ' · mic open' : ''}`);
+    }, 300);
+  } catch (e) { stopAll(); status('Could not send: ' + e.message, 'bad'); }
+}
+
+async function startListen() {
+  busy = 'listen'; buttons();
+  try {
+    ctx = newContext(true);
+    mic = await openMic();
+    await ctx.resume();
+    const sr = ctx.sampleRate, need = Math.round(RECORD_S * sr);
+    const x = new Float32Array(need);
+    let n = 0;
+    Object.assign(env, { ctxRate: sr }, micInfo(mic));
+    const done = new Promise(res => {
+      recNode = null;
+      recorder(ctx, ctx.createMediaStreamSource(mic), chunk => {
+        if (n >= need) return;
+        const m = Math.min(chunk.length, need - n);
+        x.set(chunk.subarray(0, m), n); n += m;
+        let s = 0; for (let i = 0; i < m; i++) s += chunk[i] * chunk[i];
+        const lvl = dB(s / Math.max(m, 1));  // power dBFS
+        $('#meter').style.width = Math.max(0, Math.min(100, (lvl + 70) * 100 / 70)) + '%';
+        if (n >= need) res();
+      }).then(node => recNode = node);
+    });
+    recTimer = setInterval(() => status(`Listening… ${Math.max(0, Math.ceil(RECORD_S - n / sr))} s left. Start Send on the other phone.`), 250);
+    await done;
+    clearInterval(recTimer);
+    status('Analysing…');
+    const label = { dist: pick.dist, grip: pick.grip, place: pick.place };
+    stopAll();
+    await new Promise(r => setTimeout(r, 30));
+    const res = analyze(x, sr);
+    if (res.error) return status(res.error, 'bad');
+    status('Done.', 'good');
+    const run = { at: new Date().toISOString().slice(0, 16).replace('T', ' '), ...label, env: { ...env }, ...res };
+    showResult(run);
+    runs.push(run); saveRuns(); renderRuns();
+  } catch (e) { stopAll(); status('Could not listen: ' + (e.name === 'NotAllowedError' ? 'microphone permission refused.' : e.message), 'bad'); }
+}
+
+/* ---------- Results ---------- */
+const f1 = v => Number.isFinite(v) ? v.toFixed(1) : '—';
+function showResult(run) {
+  const rows = run.rows.map(r => {
+    const [cls, word] = verdict(r);
+    return `<tr><td>${r.band} · ${r.mode}</td><td class="${cls}">${Math.round(r.ok * 100)}%</td><td>${f1(r.snr)}</td><td>${f1(r.margin10)}</td><td>${f1(r.level)}</td><td class="${cls}">${word}</td></tr>`;
+  }).join('');
+  $('#result-body').innerHTML = `
+    <p class="muted">${run.dist} · ${run.grip} · ${run.place} · ${run.passes} pass(es) · peak ${f1(dB(run.peak * run.peak))} dBFS${run.peak > 0.98 ? ' <b class="bad">clipped</b>' : ''}</p>
+    <p class="muted">Start marker ${f1(run.clarity)} dB over the floor · strongest echo ${f1(run.echo)} dB at ${f1(run.echoMs)} ms${run.drift != null ? ` · clock drift ${f1(run.drift)} ppm` : ''}</p>
+    <table><tr><th>Band</th><th>OK</th><th>SNR</th><th>Margin p10</th><th>Level</th><th></th></tr>${rows}</table>
+    <p class="muted">SNR: right tone over the noise floor (dB). Margin p10: in the worst 10% of symbols, how much louder the right tone was than the best wrong one (dB). Level: received tone level (dBFS).</p>`;
+  $('#result').hidden = false;
+}
+
+function runText(run) {
+  const e = run.env;
+  const head = `${run.at} · ${run.dist} · ${run.grip} · ${run.place} · ctx ${e.ctxRate} Hz · mic ${e.micRate || '?'} Hz · ec ${e.ec} ns ${e.ns} agc ${e.agc} · ${e.recorder} · ${navigator.userAgent.match(/iPhone|Android[^;)]*|Macintosh|Windows|Linux/)?.[0] || '?'}`;
+  const sync = `  marker ${f1(run.clarity)} dB · echo ${f1(run.echo)} dB @ ${f1(run.echoMs)} ms · drift ${run.drift != null ? f1(run.drift) + ' ppm' : '—'} · peak ${f1(dB(run.peak * run.peak))} dBFS · passes ${run.passes}`;
+  const rows = run.rows.map(r => `  ${(r.band + ' ' + r.mode).padEnd(15)} ok ${String(Math.round(r.ok * 100)).padStart(3)}%  snr ${f1(r.snr).padStart(5)}  margin ${f1(r.margin).padStart(5)} p10 ${f1(r.margin10).padStart(5)}  level ${f1(r.level).padStart(6)}  noise ${f1(r.noise).padStart(6)}`);
+  return [head, sync, ...rows].join('\n');
+}
+
+let runs = [];
+try { runs = JSON.parse(localStorage.getItem('qd-probe-runs') || '[]'); } catch {}
+const saveRuns = () => { try { localStorage.setItem('qd-probe-runs', JSON.stringify(runs)); } catch {} };
+function renderRuns() { $('#runs').textContent = runs.length ? runs.map(runText).join('\n\n') : 'No runs yet.'; }
+
+async function copyAll() {
+  const text = runs.map(runText).join('\n\n');
+  try { await navigator.clipboard.writeText(text); status('Copied.', 'good'); }
+  catch {
+    const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t);
+    t.select(); document.execCommand('copy'); t.remove(); status('Copied.', 'good');
+  }
+}
+
+/* ---------- Settings ---------- */
+const pick = { dist: '1 m', grip: 'pointed down', place: 'indoors' };
+function chips(sel, key, options) {
+  const box = $(sel);
+  const draw = () => box.replaceChildren(...options.map(o => {
+    const b = document.createElement('button'); b.textContent = o; b.className = o === pick[key] ? 'on' : '';
+    b.onclick = () => { pick[key] = o; draw(); };
+    return b;
+  }));
+  draw();
+}
+chips('#c-dist', 'dist', ['0.3 m', '1 m', '2 m', '3 m', '5 m']);
+chips('#c-grip', 'grip', ['pointed down', 'raised', 'on a table']);
+chips('#c-place', 'place', ['indoors', 'outdoors', 'noisy room']);
+const showGain = () => $('#gain-val').textContent = Math.round(+$('#gain').value * 100) + '%';
+$('#gain').oninput = showGain; showGain();
+
+$('#btn-listen').onclick = startListen;
+$('#btn-send').onclick = startSend;
+$('#btn-stop').onclick = () => { stopAll(); status('Stopped.'); };
+$('#btn-copy').onclick = copyAll;
+$('#btn-clear').onclick = () => { if (confirm('Clear all runs?')) { runs = []; saveRuns(); renderRuns(); $('#result').hidden = true; } };
+$('#env').textContent = `${window.isSecureContext ? 'Secure context' : 'NOT a secure context: the microphone will not work'} · AudioWorklet ${'AudioWorkletNode' in window ? 'yes' : 'no'} · one pass ${PASS.toFixed(1)} s, listening ${RECORD_S.toFixed(0)} s`;
+renderRuns(); buttons();
+</script>
+</body>
+</html>
