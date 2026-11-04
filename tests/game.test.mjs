@@ -90,7 +90,9 @@ function makePage(world, name, { sr = 48000, ppm = 0, t0 = 0, outLat = 0.04, inL
     }
     connect() {}
   }
-  const stream = { getAudioTracks: () => [{ getSettings: () => ({ sampleRate: sr }), addEventListener() {} }], getTracks: () => [] };
+  // Like the browser's, these native methods throw "Illegal invocation" when called detached from their object.
+  const track = { getSettings() { if (this !== track) throw new TypeError('Illegal invocation'); return { sampleRate: sr }; }, addEventListener() {} };
+  const stream = { getAudioTracks: () => [track], getTracks: () => [track] };
   const modemScope = {}; new Function('globalThis', modemSrc)(modemScope);
   const window = { isSecureContext: true, AudioContext: FakeContext, AudioWorkletNode: FakeWorkletNode, QDModem: modemScope.QDModem,
     addEventListener() {} };

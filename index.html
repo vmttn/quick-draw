@@ -735,7 +735,8 @@ function openRig() {                                 // must start inside the ta
     const node = new AudioWorkletNode(ctx, 'qd-modem', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
     ctx.createMediaStreamSource(mic).connect(node);
     node.connect(ctx.destination);
-    const micRate = (mic.getAudioTracks()[0].getSettings || (() => ({})))().sampleRate;
+    const track = mic.getAudioTracks()[0];
+    const micRate = track && track.getSettings ? track.getSettings().sampleRate : undefined;
     return { ctx, mic, node, micRate };
   })();
 }
