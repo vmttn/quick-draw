@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#1a1310">
 <title>Quick-Draw Duel · phone to phone</title>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+<script src="modem-worklet.js"></script>
 <style>
   :root {
     --bg: #1a1310; --panel: #2a1f19; --line: #4a372b; --text: #f6ead8; --muted: #c2a888;
@@ -100,6 +101,15 @@
   #toast.show { transform: translateX(-50%) translateY(0); }
   #banner { background: #4a2330; border: 1px solid #7a3446; border-radius: 12px; padding: 12px; display: flex; gap: 10px; align-items: center; justify-content: space-between; font-size: 14px; margin-bottom: 12px; }
   #banner[hidden] { display: none; }
+
+  /* sound mode */
+  .seg { display: flex; gap: 8px; }
+  .seg button { flex: 1; background: var(--bg); border: 1px solid var(--line); padding: 10px; font-weight: 700; display: flex; flex-direction: column; gap: 2px; }
+  .seg button small { font-weight: 400; font-size: 12px; color: var(--muted); }
+  .seg button.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .diag { font-size: 14px; color: var(--muted); text-align: center; min-height: 20px; }
+  .diag.good { color: var(--win); } .diag.bad { color: var(--accent); }
+  #debug { position: fixed; left: 6px; bottom: 6px; z-index: 30; font: 11px/1.3 ui-monospace, monospace; background: rgba(0,0,0,.7); color: #9f9; padding: 4px 6px; border-radius: 6px; pointer-events: none; white-space: pre; }
 </style>
 </head>
 <body>
@@ -109,13 +119,37 @@
     <p class="sub">Two phones. One signal. Fastest hand wins.</p>
   </header>
 
-  <div id="banner" hidden><span id="banner-text">Connection lost.</span><button class="secondary small" style="flex:none" data-action="restart">Start over</button></div>
+  <div id="banner" hidden><span id="banner-text">Connection lost.</span><button class="secondary small" style="flex:none" id="banner-resume" data-action="resume-sound" hidden>Resume</button><button class="secondary small" style="flex:none" data-action="restart">Start over</button></div>
 
   <!-- Home -->
   <section id="v-home" class="view">
-    <button class="primary" data-action="host">Host a duel</button>
-    <button class="secondary" data-action="join">Join a duel</button>
-    <p class="hint">One phone hosts and shows a QR code. The other phone scans it, then shows a code back for the host to scan. After that, the phones talk directly.</p>
+    <button class="primary" data-action="sound">Duel by sound</button>
+    <p class="hint">No Wi-Fi, no codes: the phones talk to each other through speaker and microphone.</p>
+    <div class="row">
+      <button class="secondary small" data-action="host">Host over Wi-Fi</button>
+      <button class="secondary small" data-action="join">Join over Wi-Fi</button>
+    </div>
+    <p class="hint">Over Wi-Fi, one phone hosts and shows a QR code. The other phone scans it, then shows a code back for the host to scan. After that, the phones talk directly.</p>
+  </section>
+
+  <!-- Sound lobby -->
+  <section id="v-sound" class="view" hidden>
+    <div class="card">
+      <h2>Duel by sound</h2>
+      <p>Open this page on both phones. One taps <b>Host</b>, the other taps <b>Join</b>. Both will ask for the microphone.</p>
+      <div class="seg" id="s-plan">
+        <button data-plan="quiet" class="on">Quiet<small>nearly silent · about 2 m</small></button>
+        <button data-plan="loud">Loud<small>audible chirps · up to 5 m</small></button>
+      </div>
+      <p>The host picks the mode; the other phone follows it.</p>
+      <div class="row">
+        <button class="primary" data-action="sound-host">Host</button>
+        <button class="primary" data-action="sound-join">Join</button>
+      </div>
+    </div>
+    <p class="status-line" id="s-status"></p>
+    <p class="diag" id="s-self"></p>
+    <button class="link" data-action="restart">Cancel</button>
   </section>
 
   <!-- Host -->
@@ -195,6 +229,7 @@
     <div class="card" id="rules">
       <ol class="rules">
         <li>Face each other, a few steps apart.</li>
+        <li id="rule-sound" hidden></li>
         <li>Hold your phone like a pistol, <b>pointing at the ground</b>, screen facing you.</li>
         <li>Wait for the <b>DRAW!</b> signal (sound, buzz and flash).</li>
         <li><b>Raise</b> your phone at your opponent and <b>tap the screen</b> to fire.</li>
@@ -440,12 +475,16 @@ function relayAnswer(hash) {
 }
 function showMsg(title, text) { $('#m-title').textContent = title; $('#m-text').textContent = text; show('v-msg'); }
 
-function lost(msg) { connected = false; setBanner(msg, true); render(); }
-function setBanner(msg) {
+function lost(msg) { connected = false; setBanner(msg); render(); }
+function setBanner(msg, resume = false) {
   $('#banner').hidden = !msg;
+  $('#banner-resume').hidden = !resume;
   if (msg) $('#banner-text').textContent = msg;
 }
-function send(obj) { if (dc && dc.readyState === 'open') dc.send(JSON.stringify(obj)); }
+function send(obj) {
+  if (sound.on) return soundSend(obj);
+  if (dc && dc.readyState === 'open') dc.send(JSON.stringify(obj));
+}
 
 /* ---------- QR rendering & scanning ---------- */
 function renderQR(el, text) {
@@ -581,35 +620,56 @@ async function shareOrCopy(text, share) {
 }
 
 
-/* ---------- Sound (synthesised, no files) ---------- */
-let actx = null;
+/* ---------- Sound (synthesised, no files) ----------
+   Every effect goes through sfxOut. In sound mode that is a steep low-pass filter, so the
+   effects stay out of the modem's bands (the modem itself is connected straight to the speaker). */
+let actx = null, sfxOut = null;
 function audioInit() {
   try {
     if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
     if (actx.state === 'suspended') actx.resume();
   } catch {}
 }
+const sfxDest = () => sfxOut || actx.destination;
+function guardSfx(cutoff) {                       // 8th-order Butterworth low-pass, and some headroom for the modem
+  const head = actx.createGain(); head.gain.value = 0.5;
+  let node = head;
+  for (const q of [0.5098, 0.6013, 0.9000, 2.5629]) {
+    const b = actx.createBiquadFilter(); b.type = 'lowpass'; b.frequency.value = cutoff; b.Q.value = q;
+    node.connect(b); node = b;
+  }
+  node.connect(actx.destination);
+  sfxOut = head;
+}
 function tone(freq, start, dur, type = 'sine', gain = 0.5) {
-  if (!actx) return;
+  if (!actx) return null;
   const t = actx.currentTime + start, o = actx.createOscillator(), g = actx.createGain();
   o.type = type; o.frequency.setValueAtTime(freq, t);
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + 0.01);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur + 0.05);
+  o.connect(g).connect(sfxDest()); o.start(t); o.stop(t + dur + 0.05);
+  return o;
 }
 function noise(dur, gain, cutoff) {
-  if (!actx) return;
+  if (!actx) return null;
   const len = actx.sampleRate * dur | 0, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
   for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
   const s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
   s.buffer = buf; f.type = 'lowpass'; f.frequency.value = cutoff; g.gain.value = gain;
-  s.connect(f).connect(g).connect(actx.destination); s.start();
+  s.connect(f).connect(g).connect(sfxDest()); s.start();
+  return s;
 }
 const sfx = {
   heartbeat() { tone(55, 0, 0.18, 'sine', 0.7); tone(50, 0.22, 0.2, 'sine', 0.5); },
-  draw() { [0, 0.16].forEach(s => { tone(1320, s, 0.14, 'square', 0.35); tone(1980, s, 0.14, 'square', 0.2); }); tone(880, 0.32, 0.5, 'triangle', 0.5); },
+  // `at`: seconds from now; returns the nodes so a DRAW scheduled ahead can be called off.
+  draw(at = 0) {
+    const n = [];
+    [0, 0.16].forEach(s => { n.push(tone(1320, at + s, 0.14, 'triangle', 0.45), tone(1980, at + s, 0.14, 'triangle', 0.25)); });
+    n.push(tone(880, at + 0.32, 0.5, 'triangle', 0.5));
+    return n.filter(Boolean);
+  },
   bang() { noise(0.45, 1.2, 3500); tone(70, 0, 0.25, 'sine', 0.9); },
-  click() { tone(2400, 0, 0.03, 'square', 0.3); tone(900, 0.05, 0.05, 'square', 0.2); },
+  click() { tone(2400, 0, 0.03, 'triangle', 0.4); tone(900, 0.05, 0.05, 'triangle', 0.3); },
   win() { [523, 659, 784, 1047].forEach((f, i) => tone(f, i * 0.11, 0.25, 'triangle', 0.4)); },
   lose() { [392, 330, 262, 196].forEach((f, i) => tone(f, i * 0.16, 0.3, 'sawtooth', 0.18)); },
 };
@@ -620,7 +680,251 @@ let wakeLock = null;
 async function keepAwake() {
   try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => wakeLock = null); } } catch {}
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && connected) keepAwake(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (connected || sound.on) keepAwake();
+  if (sound.on && actx && actx.state !== 'running') actx.resume().catch(() => {});   // may need the Resume tap on iOS
+});
+
+/* ---------- Sound link ----------
+   The phones talk through speaker and microphone (modem-worklet.js), each in its own band,
+   each repeating its current state: HELLO while pairing, then IDLE / READY / ARMED / OUT / ABORT.
+   soundSend() turns the game's messages into that state; packets from the other phone are turned
+   back into the same messages the Wi-Fi link delivers (onMessage), once per change.
+   Since only the latest state is sent, two states must not be replaced too early:
+   - a result (OUT) is held until the other phone shows it has it: it says OUT_ACK ("my result,
+     and I have yours") for that round, or it has moved past the round;
+   - an ABORT is held until the host has left that round.
+   A "ready" pressed meanwhile waits, then goes out.
+   The host's ARMED packets say how long until DRAW, counted from the end of the packet. The guest
+   hears that end at endFrame (its audio clock) and knows its own speaker-to-mic delay R, measured
+   from its own packets, so it schedules its DRAW sound at endFrame - R + payload: both DRAW sounds
+   then leave the speakers together. */
+const M = window.QDModem;
+const sound = {
+  on: false, plan: 'quiet', sess: 0, sr: 0, node: null, mic: null, tx: null, rt: null,
+  lastRx: 0, lastKey: '', armed: new Set(), armRound: -1, armGood: [], armAny: [],
+  aborting: null, outRound: null, outPayload: 0, peerOuts: new Set(), pendingReady: null,
+  stats: null, last: null, lost: false, selfTimer: 0,
+};
+const DEBUG = /[?&]debug\b/.test(location.search);
+
+function openRig() {                                 // must start inside the tap (iOS)
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+    return Promise.reject(new Error('The microphone only works when the page is opened over https://, in a browser (not inside an app).'));
+  if (!window.AudioWorkletNode || !M) return Promise.reject(new Error('This browser is too old for the sound link (no AudioWorklet). Use the Wi-Fi mode.'));
+  // Order from Battle Drones' rig: context first, then the iOS session type, then the microphone.
+  const ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+  try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch {}
+  ctx.resume();
+  const b = ctx.createBufferSource(); b.buffer = ctx.createBuffer(1, 1, ctx.sampleRate); b.connect(ctx.destination); b.start();
+  actx = ctx;
+  return (async () => {
+    let mic;
+    try {
+      mic = await navigator.mediaDevices.getUserMedia({ audio: {
+        echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 1 } } });
+    } catch (e) {
+      throw new Error(e.name === 'NotAllowedError' || e.name === 'SecurityError'
+        ? 'Microphone permission was blocked. Allow the microphone for this site, then reload.'
+        : `Could not start the microphone (${e.name}).`);
+    }
+    await ctx.resume();
+    try { await ctx.audioWorklet.addModule('modem-worklet.js'); }
+    catch { throw new Error('Could not load the sound modem (modem-worklet.js).'); }
+    const node = new AudioWorkletNode(ctx, 'qd-modem', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+    ctx.createMediaStreamSource(mic).connect(node);
+    node.connect(ctx.destination);
+    const micRate = (mic.getAudioTracks()[0].getSettings || (() => ({})))().sampleRate;
+    return { ctx, mic, node, micRate };
+  })();
+}
+
+// Can this phone use a plan? Its audio and its microphone must run fast enough for the top band.
+function rateOk(plan, rig) {
+  const top = M.bandTop(M.PLANS[plan].guest), need = 2.2 * top;
+  return rig.ctx.sampleRate >= need && !(rig.micRate && rig.micRate < need);
+}
+
+async function soundStart(r) {
+  if (sound.on) return;
+  role = r; sound.on = true;
+  document.querySelectorAll('#v-sound button').forEach(b => { if (!b.classList.contains('link')) b.disabled = true; });
+  soundStatus('Starting the microphone…');
+  keepAwake();
+  let rig;
+  try { rig = await openRig(); } catch (e) { return soundFail(e.message); }
+  Object.assign(sound, { node: rig.node, mic: rig.mic, sr: rig.ctx.sampleRate });
+  rig.node.port.onmessage = e => onModem(e.data);
+  rig.mic.getAudioTracks()[0].addEventListener('ended', () => setBanner('The microphone stopped. Start over to reconnect.'));
+  const rateMsg = `This phone records at ${rig.micRate || rig.ctx.sampleRate} Hz, too low for this mode. Disconnect Bluetooth headphones${role === 'host' && sound.plan === 'quiet' ? ', or pick Loud' : ''}.`;
+  if (r === 'host') {
+    if (!rateOk(sound.plan, rig)) return soundFail(rateMsg);
+    sound.sess = 1 + Math.floor(Math.random() * 31);
+    soundConfigure(sound.plan);
+    setTx({ state: M.ST.HELLO, round: 0, payload: 0 });
+    soundStatus(`Hosting duel #${sound.sess}. On the other phone, tap Join.`);
+  } else {
+    // Listen for a host in either mode (only those this phone can hear), and stay silent until one is found.
+    const plans = ['quiet', 'loud'].filter(p => rateOk(p, rig));
+    if (!plans.length) return soundFail(rateMsg);
+    sound.node.port.postMessage({ type: 'config', tx: null, rx: plans.map(p => ({ id: p, f0: M.PLANS[p].host })) });
+    soundStatus('Listening for the host… Keep the phones close for now.');
+  }
+}
+
+// Transmit in our band, listen to the other phone's band ('peer') and to our own (round trip).
+function soundConfigure(plan) {
+  sound.plan = plan;
+  const p = M.PLANS[plan], mine = role === 'host' ? p.host : p.guest, theirs = role === 'host' ? p.guest : p.host;
+  sound.node.port.postMessage({ type: 'config', tx: mine, rx: [{ id: 'peer', f0: theirs }, { id: 'own', f0: mine }] });
+  guardSfx(Math.min(p.host, p.guest) / 1.6);
+  $('#rule-sound').hidden = false;
+  $('#rule-sound').innerHTML = plan === 'quiet'
+    ? 'Sound link: stand <b>about 2 m apart</b>, and keep your fingers off the bottom edge of the phone.'
+    : 'Sound link: stand <b>up to 5 m apart</b>, and keep your fingers off the bottom edge of the phone.';
+  clearTimeout(sound.selfTimer);
+  sound.selfTimer = setTimeout(() => { if (sound.rt == null) selfLine('This phone can\'t hear its own signal. Turn the volume up (on iPhone, also turn off silent mode).', 'bad'); }, 6000);
+}
+
+function soundFail(msg) {
+  soundStatus(msg);
+  sound.on = false;
+  try { sound.mic && sound.mic.getTracks().forEach(t => t.stop()); } catch {}
+  try { actx && actx.close(); } catch {}
+  try { if (navigator.audioSession) navigator.audioSession.type = 'auto'; } catch {}
+  actx = null; sfxOut = null;
+  document.querySelectorAll('#v-sound button').forEach(b => { b.disabled = false; });
+}
+function soundStatus(t) { $('#s-status').textContent = t; }
+function selfLine(t, cls) { const s = $('#s-self'); s.textContent = t; s.className = 'diag ' + (cls || ''); }
+
+function setTx(st) {
+  const full = { sess: sound.sess, round: 0, payload: 0, drawAtFrame: null, ...st };
+  const key = JSON.stringify(full);
+  if (key === sound.tx) return;                      // same state: don't restart the packet
+  sound.tx = key;
+  sound.node.port.postMessage({ type: 'state', ...full });
+}
+
+// The game's messages -> what this phone broadcasts.
+function soundSend(m) {
+  if (!sound.node || !connected) return;
+  const S = M.ST;
+  switch (m.t) {
+    case 'ready':
+      if (state !== 'lobby') return;                 // arm and result states outlive a round's ready flag
+      if (sound.aborting != null || sound.outRound != null) { sound.pendingReady = m; return; }
+      setTx({ state: m.v ? S.READY : S.IDLE, round: round & 63, payload: m.tap ? 1 : 0 });
+      break;
+    case 'arm':
+      setTx({ state: S.ARMED, round: m.r & 63, drawAtFrame: Math.round(m.audioAt * sound.sr) });
+      break;
+    case 'out':
+      sound.outRound = m.r;
+      sound.outPayload = (m.foul ? 4096 : 0) | (m.ms == null ? 4095 : Math.min(4094, Math.round(m.ms)));
+      setTx({ state: sound.peerOuts.has(m.r) ? S.OUT_ACK : S.OUT, round: m.r & 63, payload: sound.outPayload });
+      break;
+    case 'abort':                                    // keep saying ABORT until the host has left that round
+      sound.aborting = m.r;
+      setTx({ state: S.ABORT, round: m.r & 63, payload: 0 });
+      break;
+  }
+}
+
+const median = a => { const s = [...a].sort((x, y) => x - y); return s[(s.length - 1) >> 1]; };
+const unwrapRound = r6 => round + ((((r6 - round) % 64) + 96) % 64 - 32);   // the 6-bit round nearest ours
+
+function onModem(m) {
+  if (m.type === 'self') {
+    sound.rt = m.rtFrames;
+    if (!connected) selfLine(`This phone hears its own signal ✓ (${(m.rtFrames / sound.sr * 1000).toFixed(0)} ms round trip)`, 'good');
+    return debugView();
+  }
+  if (m.type === 'stats') { sound.stats = m; return debugView(); }
+  if (m.type !== 'packet') return;
+  const S = M.ST;
+  if (role === 'guest' && !sound.sess) {             // pairing: adopt the first host heard
+    if (m.state !== S.HELLO) return;
+    sound.sess = m.sess;
+    soundConfigure(m.band);
+    setTx({ state: S.HELLO, round: 0, payload: 0 });
+    soundStatus(`Found duel #${m.sess} (${m.band} mode). Answering…`);
+    return;
+  }
+  if (m.band !== 'peer' || m.sess !== sound.sess) return;
+  sound.lastRx = performance.now(); sound.last = m;
+  if (sound.lost) { sound.lost = false; setBanner(null); }
+  debugView();
+  if (!connected) {
+    // The host connects when it hears the guest's HELLO; the guest when the host stops saying HELLO.
+    if ((role === 'host') !== (m.state === S.HELLO)) return;
+    setTx({ state: S.IDLE, round: 0, payload: 0 });
+    onConnected();
+    return;
+  }
+  const r = unwrapRound(m.round);
+  const isOut = m.state === S.OUT || m.state === S.OUT_ACK;
+  // Release held states once the other phone is past them.
+  if (sound.aborting != null && !(m.state === S.ARMED && r === sound.aborting)) sound.aborting = null;
+  if (sound.outRound != null && ((m.state === S.OUT_ACK && r === sound.outRound) || (!isOut && m.state !== S.HELLO && r >= sound.outRound)))
+    sound.outRound = null;
+  if (sound.aborting == null && sound.outRound == null && sound.pendingReady) {
+    const p = sound.pendingReady; sound.pendingReady = null;
+    soundSend(p);
+  }
+  if (m.state === S.ARMED) return armFromPacket(m, r);
+  const key = `${isOut ? 'out' : m.state}:${r}:${m.payload}`;
+  if (key === sound.lastKey) return;
+  sound.lastKey = key;
+  if (m.state === S.IDLE || m.state === S.READY) onMessage({ t: 'ready', v: m.state === S.READY, tap: !!(m.payload & 1) });
+  else if (m.state === S.ABORT) onMessage({ t: 'abort', r });
+  else if (isOut) {
+    if (sound.peerOuts.has(r)) return;
+    sound.peerOuts.add(r);
+    if (sound.outRound === r) setTx({ state: S.OUT_ACK, round: r & 63, payload: sound.outPayload });
+    const out = { t: 'out', r, foul: !!(m.payload & 4096), ms: (m.payload & 4095) === 4095 ? null : m.payload & 4095 };
+    // A result for a round whose arm packets we all missed (e.g. a very early foul): arm it first.
+    if (r !== round && !sound.armed.has(r) && state === 'lobby') { sound.armed.add(r); onMessage({ t: 'arm', r, at: performance.now() + 5000 }); }
+    onMessage(out);
+  }
+}
+
+// Each ARMED packet gives an estimate of when to DRAW. Among those with clean timing take the
+// earliest: the remaining errors come from locking on an echo, which is always late.
+function armFromPacket(m, r) {
+  if (sound.armRound !== r) { sound.armRound = r; sound.armGood = []; sound.armAny = []; }
+  const rt = sound.rt != null ? sound.rt : Math.round(0.08 * sound.sr);   // 80 ms until this phone has measured its own
+  const frame = m.endFrame - rt + m.payload * 0.002 * sound.sr;
+  (m.goodTiming ? sound.armGood : sound.armAny).push(frame);
+  const audioAt = (sound.armGood.length ? Math.min(...sound.armGood) : median(sound.armAny)) / sound.sr;
+  const localAt = performance.now() + (audioAt - actx.currentTime) * 1000;
+  if (!sound.armed.has(r)) {
+    if (state !== 'lobby') return;
+    sound.armed.add(r);
+    onMessage({ t: 'arm', r, at: localAt, audioAt });
+  } else if (round === r) retimeDraw(localAt, audioAt);
+}
+
+setInterval(() => {                                  // link watchdog
+  if (!sound.on || !connected) return;
+  if (actx && actx.state !== 'running') return setBanner('Sound paused. Tap Resume.', true);
+  if (performance.now() - sound.lastRx > 3500 && !sound.lost) {
+    sound.lost = true; setBanner('Sound link lost. Move the phones closer, and keep the speakers uncovered.');
+  }
+}, 500);
+
+function debugView() {
+  if (!DEBUG) return;
+  let d = $('#debug');
+  if (!d) { d = document.createElement('div'); d.id = 'debug'; document.body.appendChild(d); }
+  const s = sound.stats, l = sound.last;
+  d.textContent = [
+    `${role || '-'} ${sound.plan} #${sound.sess} ${sound.sr} Hz  R ${sound.rt != null ? (sound.rt / sound.sr * 1000).toFixed(1) + ' ms' : '?'}`,
+    s ? `rx ok ${s.ok} bad ${s.bad} cand ${s.cands} nochirp ${s.nochirp}  mic ${s.rmsDb.toFixed(0)} dBFS` : '',
+    l ? `last: state ${l.state} r ${l.round} p ${l.payload} tq ${l.tq.toFixed(0)} ${((performance.now() - sound.lastRx) / 1000).toFixed(1)} s ago` : '',
+  ].join('\n');
+}
 
 /* ---------- Motion sensor ----------
    deviceorientation's beta angle tells us where the top edge of the phone points:
@@ -678,6 +982,8 @@ async function syncClock() {
    never affects who wins. Each side sends exactly one outcome per round. */
 let state = 'lobby', round = 0, pressedReady = false, readySent = null,
     peerReady = false, peerTap = false, drawTimer = 0, beatTimer = 0, shotTimer = 0, drawAt = 0;
+// Sound mode schedules the DRAW sound at an exact audio-clock time, a little ahead.
+let drawAudioAt = null, drawNodes = null, drawLocalAt = 0;
 let myOut = null; const peerOuts = {};
 const score = { me: 0, them: 0 };
 let last = null;   // last result, for display
@@ -685,7 +991,8 @@ let last = null;   // last result, for display
 function onConnected() {
   connected = true; clearTimeout(connectTimer); setBanner(null);
   show('v-game'); buzz(40);
-  if (role === 'guest') syncClock();
+  if (sound.on) synced = true;                 // the sound link times the DRAW itself
+  else if (role === 'guest') syncClock();
   render();
 }
 
@@ -704,23 +1011,46 @@ function updateReady() {
 function maybeArm() {
   if (role !== 'host' || state !== 'lobby' || !readySent || !peerReady || !synced) return;
   round++;
-  const at = performance.now() + 2500 + Math.random() * 4500;   // 2.5 to 7 s of suspense
-  send({ t: 'arm', r: round, at });
-  startArmed(round, at);
+  // 2.5 to 7 s of suspense; 4 to 9 s by sound, so the other phone hears the arm packet in time.
+  const delay = sound.on ? 4000 + Math.random() * 5000 : 2500 + Math.random() * 4500;
+  const at = performance.now() + delay, audioAt = sound.on ? actx.currentTime + delay / 1000 : null;
+  send({ t: 'arm', r: round, at, audioAt });
+  startArmed(round, at, audioAt);
 }
 
-function startArmed(r, localAt) {
+function startArmed(r, localAt, audioAt = null) {
   round = r; state = 'armed'; myOut = null;
   clearTimers();
-  drawTimer = setTimeout(fireDraw, Math.max(0, localAt - performance.now()));
+  drawAudioAt = audioAt;
+  scheduleDraw(localAt);
   sfx.heartbeat(); beatTimer = setInterval(sfx.heartbeat, 900);
   render();
+}
+
+// With an audio-clock time, the DRAW sound is scheduled 40 ms ahead at that exact time (timers
+// jitter by milliseconds), and the screen flips at the matching moment.
+function scheduleDraw(localAt) {
+  clearTimeout(drawTimer);
+  drawLocalAt = localAt;
+  const lead = drawAudioAt != null ? 40 : 0;
+  drawTimer = setTimeout(() => {
+    if (drawAudioAt != null) drawNodes = sfx.draw(Math.max(0, drawAudioAt - actx.currentTime));
+    drawTimer = setTimeout(fireDraw, Math.max(0, localAt - performance.now()));
+  }, Math.max(0, localAt - performance.now() - lead));
+}
+// A later arm packet refined the estimate (sound mode, guest).
+function retimeDraw(localAt, audioAt) {
+  if (state !== 'armed' || drawNodes || Math.abs(localAt - drawLocalAt) < 0.5) return;
+  drawAudioAt = audioAt;
+  scheduleDraw(localAt);
 }
 
 function fireDraw() {
   clearInterval(beatTimer);
   state = 'drawn'; drawAt = performance.now();
-  sfx.draw(); buzz([250]);
+  if (!drawNodes) sfx.draw();
+  drawNodes = null;
+  buzz([250]);
   const f = $('#arena .flash'); f.classList.remove('go'); void f.offsetWidth; f.classList.add('go');
   f.addEventListener('animationend', () => f.classList.remove('go'), { once: true });
   shotTimer = setTimeout(() => { if (!myOut) finish({ foul: false, ms: null }); }, 5000);
@@ -777,7 +1107,12 @@ function abortRound() {
   updateReady(); render();
 }
 
-function clearTimers() { clearTimeout(drawTimer); clearInterval(beatTimer); clearTimeout(shotTimer); }
+function clearTimers() {
+  clearTimeout(drawTimer); clearInterval(beatTimer); clearTimeout(shotTimer);
+  // A DRAW sound scheduled ahead, but the round ended before it (foul, abort): call it off.
+  if (drawNodes && state === 'armed') drawNodes.forEach(n => { try { n.stop(); } catch {} });
+  drawNodes = null;
+}
 
 function onMessage(m) {
   switch (m.t) {
@@ -788,7 +1123,7 @@ function onMessage(m) {
     case 'arm':
       // If we stopped being ready while this message was in flight, call it off.
       if (state !== 'lobby' || !(pressedReady && holstered())) { send({ t: 'abort', r: m.r }); abortRound(); break; }
-      startArmed(m.r, m.at - offset);
+      startArmed(m.r, m.at - offset, m.audioAt);
       break;
     case 'abort': if (m.r === round && state === 'armed') abortRound(); break;
     case 'out':
@@ -891,11 +1226,20 @@ const actions = {
   'paste-offer': () => startGuest($('#j-paste').value),
   'scan-cancel': stopScan,
   'scan-switch': switchCamera,
+  sound: () => show('v-sound'),
+  'sound-host': () => soundStart('host'),
+  'sound-join': () => soundStart('guest'),
+  'resume-sound': () => { if (actx) actx.resume().then(() => { if (actx.state === 'running') setBanner(null); }); },
   ready: pressReady,
 };
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-action]');
   if (b && actions[b.dataset.action]) actions[b.dataset.action]();
+  const p = e.target.closest('[data-plan]');
+  if (p && !sound.on) {
+    sound.plan = p.dataset.plan;
+    document.querySelectorAll('[data-plan]').forEach(x => x.classList.toggle('on', x === p));
+  }
 });
 
 if (location.hash.startsWith('#o=')) startGuest(location.hash);

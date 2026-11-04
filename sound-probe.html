@@ -391,6 +391,9 @@ async function startListen() {
     ctx = newContext(true);
     mic = await openMic();
     await ctx.resume();
+    // A low rate can't hold the high bands; analysing anyway would report them as failing, which looks like real physics.
+    const micRate = micInfo(mic).micRate, low = Math.min(ctx.sampleRate, micRate || Infinity);
+    if (low < 44100) throw new Error(`this phone records at ${low} Hz, too low to measure the high bands (Bluetooth headset connected?). Disconnect it and try again.`);
     const sr = ctx.sampleRate, need = Math.round(RECORD_S * sr);
     const x = new Float32Array(need);
     let n = 0;
